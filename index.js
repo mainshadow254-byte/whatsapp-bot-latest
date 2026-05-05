@@ -759,6 +759,7 @@ async function requireGroupAdmin(msg) {
     return false;
   }
 
+  if (isTrustedOwner(activeSenderId(msg))) return true;
   if (await isGroupAdmin(msg)) return true;
 
   await msg.reply('Group admin only command.');
@@ -2115,6 +2116,8 @@ async function start(name) {
 .badwords
 .antidelete on/off
 .antisale on/off
+.antisale status
+.antisale test text
 .antiviewonce on/off
 .antiforeign on/off
 .antifake on/off
@@ -2819,14 +2822,30 @@ async function start(name) {
         return msg.reply(`Anti-mention limit set to ${limit}.`);
       }
 
-      if (text === '.antisale on') {
+      if (text === '.antisale status') {
+        if (!isGroup) return msg.reply('This command works in groups only.');
+        return msg.reply(
+          `Anti-sale: ${g.antisale ? 'ON' : 'OFF'}\n` +
+          `Sale keywords: ${SALE_KEYWORDS.length}\n` +
+          `Admins are ignored. Normal members are warned with the strict notice.`
+        );
+      }
+
+      if (text.startsWith('.antisale test ')) {
+        if (!isGroup) return msg.reply('This command works in groups only.');
+        const sample = raw.slice(15).trim();
+        const keyword = saleKeywordDetected(sample);
+        return msg.reply(keyword ? `Detected sale keyword: ${keyword}` : 'No sale keyword detected in that text.');
+      }
+
+      if (text === '.antisale on' || text === '.anti-sale on') {
         if (!(await requireGroupAdmin(msg))) return;
         g.antisale = true;
         save(MEMORY_FILE, memory);
-        return msg.reply('Anti-sale ON.');
+        return msg.reply(`Anti-sale ON. ${SALE_KEYWORDS.length} sale/deal/payment keywords loaded.`);
       }
 
-      if (text === '.antisale off') {
+      if (text === '.antisale off' || text === '.anti-sale off') {
         if (!(await requireGroupAdmin(msg))) return;
         g.antisale = false;
         save(MEMORY_FILE, memory);
