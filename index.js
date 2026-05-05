@@ -27,6 +27,8 @@ const AUDIO_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const VIDEO_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const MIN_AUDIO_BYTES = 100 * 1024;
 const MIN_VIDEO_BYTES = 500 * 1024;
+const MAX_VIDEO_BYTES = Number(process.env.MAX_VIDEO_MB || 45) * 1024 * 1024;
+const YT_DLP_VIDEO_HEIGHT = Number(process.env.YT_DLP_VIDEO_HEIGHT || 360);
 const HOSTING_PROMO = 'For bot hosting call +254 772 418884.';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -726,11 +728,12 @@ async function ytDlpDownload(kind, videoUrl, outputPath) {
     baseArgs.push('--proxy', process.env.YT_DLP_PROXY);
   }
 
+  const videoHeight = Number.isInteger(YT_DLP_VIDEO_HEIGHT) && YT_DLP_VIDEO_HEIGHT > 0 ? YT_DLP_VIDEO_HEIGHT : 360;
   const args = kind === 'video'
     ? [
         ...baseArgs,
         '-f',
-        'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]',
+        `bestvideo[ext=mp4][height<=${videoHeight}]+bestaudio[ext=m4a]/best[ext=mp4][height<=${videoHeight}]/best[height<=${videoHeight}]`,
         '--merge-output-format',
         'mp4',
         '-o',
@@ -772,6 +775,16 @@ function assertUsableFile(file, minBytes, label) {
   if (!fs.existsSync(file)) throw new Error(`${label} was not created`);
   const stats = fs.statSync(file);
   if (stats.size < minBytes) throw new Error(`${label} looks incomplete`);
+}
+
+function assertMaxFileSize(file, maxBytes, label) {
+  const stats = fs.statSync(file);
+  if (stats.size > maxBytes) {
+    const mb = (stats.size / 1024 / 1024).toFixed(1);
+    const limit = (maxBytes / 1024 / 1024).toFixed(0);
+    throw new Error(`${label} is ${mb}MB, above WhatsApp send limit (${limit}MB)`);
+  }
+  return stats.size;
 }
 
 async function sendTextOrImage(client, chatId, text, mentions = []) {
@@ -947,7 +960,7 @@ async function sendVideo(msg, query) {
         logLine(`Video scraper fallback (${scraperError.message})`);
         await withTimeout(new Promise((resolve, reject) => {
           const stream = ytdl(video.url, {
-            quality: 'highest',
+            quality: 'lowest',
             filter: format => format.container === 'mp4' && format.hasAudio && format.hasVideo
           });
           stream.on('error', reject);
@@ -960,12 +973,14 @@ async function sendVideo(msg, query) {
     }
 
     assertUsableFile(file, MIN_VIDEO_BYTES, 'Video download');
+    const videoBytes = assertMaxFileSize(file, MAX_VIDEO_BYTES, 'Video');
+    logLine(`Video ready: ${video.title} (${(videoBytes / 1024 / 1024).toFixed(1)}MB)`);
     const media = MessageMedia.fromFilePath(file);
     media.filename = `${title}.mp4`;
     await msg.react('✅').catch(() => {});
     await msg.reply(media, undefined, { caption: `${video.title}\n${video.url}` });
   } catch (e) {
-    logLine(`Video download failed: ${e.message}`);
+    logLine(`Video download failed: ${e && e.stack ? e.stack : e.message}`);
     await msg.react('❌').catch(() => {});
     await msg.reply(fallbackYoutubeReply('video', video, e.message));
   } finally {
