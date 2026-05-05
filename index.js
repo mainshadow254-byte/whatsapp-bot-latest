@@ -17,6 +17,12 @@ const OWNERLOCK_FILE = './ownerlock.json';
 const SCHEDULE_FILE = './schedules.json';
 const SCHEDULE_UTC_OFFSET_HOURS = 3;
 const SCHEDULE_TIMEZONE_LABEL = 'Africa/Nairobi';
+const AUDIO_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+const VIDEO_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+const MIN_AUDIO_BYTES = 100 * 1024;
+const MIN_VIDEO_BYTES = 500 * 1024;
+const HOSTING_PROMO = 'For bot hosting call +254 772 418884.';
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function load(file, def) {
   try {
@@ -36,7 +42,8 @@ let memory = load(MEMORY_FILE, {
   sessions: {},
   warns: {},
   savedContacts: {},
-  inviteOptIns: {}
+  inviteOptIns: {},
+  hostingClients: {}
 });
 
 let sessions = load(SESSION_FILE, { sessions: ['main'] });
@@ -53,6 +60,7 @@ function normalizeRuntimeState() {
   if (!memory.warns) memory.warns = {};
   if (!memory.savedContacts || Array.isArray(memory.savedContacts)) memory.savedContacts = {};
   if (!memory.inviteOptIns || Array.isArray(memory.inviteOptIns)) memory.inviteOptIns = {};
+  if (!memory.hostingClients || Array.isArray(memory.hostingClients)) memory.hostingClients = {};
   if (!Array.isArray(sessions.sessions)) sessions.sessions = ['main'];
   if (!sessions.sessions.length) sessions.sessions = ['main'];
   if (!Array.isArray(ownerlock.owners)) ownerlock.owners = [];
@@ -181,6 +189,10 @@ function tag(id) {
   return `@${String(id).split('@')[0]}`;
 }
 
+function hostingPromoText() {
+  return `\n\n${HOSTING_PROMO}`;
+}
+
 function user(id) {
   if (!memory.users) memory.users = {};
   if (!memory.users[id]) memory.users[id] = { nickname: null };
@@ -286,6 +298,67 @@ function ownerIdFromInput(msg, rawValue) {
   const mentioned = firstMention(msg);
   if (mentioned) return mentioned;
   return normalizeNumber(rawValue);
+}
+
+function hostingClientStats(id) {
+  const record = memory.hostingClients && memory.hostingClients[id];
+  if (!record) return null;
+
+  const now = Date.now();
+  const startedAt = Number(record.startedAt || record.createdAt || now);
+  const expiresAt = Number(record.expiresAt || now);
+  const totalDays = Math.max(0, Number(record.totalDays || Math.ceil((expiresAt - startedAt) / DAY_MS)));
+  const connectedDays = Math.max(0, Math.floor((now - startedAt) / DAY_MS));
+  const remainingDays = Math.max(0, Math.ceil((expiresAt - now) / DAY_MS));
+
+  return {
+    ...record,
+    startedAt,
+    expiresAt,
+    totalDays,
+    connectedDays,
+    remainingDays,
+    expired: expiresAt <= now
+  };
+}
+
+function hostingStatusText(id, displayName, note = '') {
+  const stats = hostingClientStats(id);
+  if (!stats) return null;
+
+  return [
+    `*Githinji Hosting Reminder*`,
+    '',
+    `Client: ${displayName}`,
+    `Connected: ${stats.connectedDays} day${stats.connectedDays === 1 ? '' : 's'}`,
+    `Remaining: ${stats.remainingDays} day${stats.remainingDays === 1 ? '' : 's'}`,
+    `Plan: ${stats.totalDays} day${stats.totalDays === 1 ? '' : 's'}`,
+    `Status: ${stats.expired ? 'Expired' : 'Active'}`,
+    note ? `Reminder: ${note}` : '',
+    HOSTING_PROMO
+  ].filter(Boolean).join('\n');
+}
+
+function parseHostingAdd(msg, rawValue) {
+  const mentioned = firstMention(msg);
+  const parts = String(rawValue || '').trim().split(/\s+/).filter(Boolean);
+  const target = mentioned || normalizeNumber(parts[0]);
+  const daysToken = mentioned ? parts.find(part => /^\d+$/.test(part)) : parts[1];
+  const days = Number(daysToken);
+
+  if (!target || !Number.isInteger(days) || days < 1) return null;
+  return { target, days };
+}
+
+async function hostingTargetFromInput(msg, rawValue) {
+  const mentioned = firstMention(msg);
+  if (mentioned) return mentioned;
+  if (msg.hasQuotedMsg) {
+    const quoted = await msg.getQuotedMessage();
+    return senderId(quoted);
+  }
+  const first = String(rawValue || '').trim().split(/\s+/)[0];
+  return normalizeNumber(first);
 }
 
 function safeFileName(name) {
@@ -606,6 +679,21 @@ function removeFile(file) {
   fs.unlink(file, () => {});
 }
 
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function assertUsableFile(file, minBytes, label) {
+  if (!fs.existsSync(file)) throw new Error(`${label} was not created`);
+  const stats = fs.statSync(file);
+  if (stats.size < minBytes) throw new Error(`${label} looks incomplete`);
+}
+
 async function sendTextOrImage(client, chatId, text, mentions = []) {
   try {
     const iconUrl = await client.getProfilePicUrl(chatId);
@@ -675,14 +763,25 @@ async function convertMessageMedia(msg, outputExt, configure, mimetype) {
 }
 
 async function sendSong(msg, query) {
+  const cleanQuery = String(query || '').trim();
+  if (cleanQuery.length < 2) {
+    return msg.reply('Write a song name after the command.');
+  }
+
   let results;
   try {
-    results = await ytSearch(query);
+    await msg.react('⏳').catch(() => {});
+    results = await withTimeout(ytSearch(cleanQuery), 30000, 'Song search');
   } catch (e) {
+    logLine(`Song search failed: ${e.message}`);
+    await msg.react('❌').catch(() => {});
     return msg.reply(`Song search failed: ${e.message}`);
   }
 
-  if (!results.videos.length) return msg.reply('No result found.');
+  if (!results || !Array.isArray(results.videos) || !results.videos.length) {
+    await msg.react('❌').catch(() => {});
+    return msg.reply(`No song found for "${cleanQuery}".`);
+  }
 
   const video = results.videos[0];
   const title = safeFileName(video.title);
@@ -695,15 +794,19 @@ async function sendSong(msg, query) {
       return msg.reply(fallbackYoutubeReply('song', video, 'invalid YouTube URL'));
     }
 
-    await convertYoutubeToMp3(video.url, file);
+    await withTimeout(convertYoutubeToMp3(video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download');
+    assertUsableFile(file, MIN_AUDIO_BYTES, 'Song download');
     const media = MessageMedia.fromFilePath(file);
     media.filename = `${title}.mp3`;
 
+    await msg.react('✅').catch(() => {});
     await msg.reply(media, undefined, {
       sendAudioAsVoice: false,
       caption: `${video.title}\n${video.url}`
     });
   } catch (e) {
+    logLine(`Song download failed: ${e.message}`);
+    await msg.react('❌').catch(() => {});
     await msg.reply(fallbackYoutubeReply('song', video, e.message));
   } finally {
     removeFile(file);
@@ -711,14 +814,25 @@ async function sendSong(msg, query) {
 }
 
 async function sendVideo(msg, query) {
+  const cleanQuery = String(query || '').trim();
+  if (cleanQuery.length < 2) {
+    return msg.reply('Write a video name after the command.');
+  }
+
   let results;
   try {
-    results = await ytSearch(query);
+    await msg.react('⏳').catch(() => {});
+    results = await withTimeout(ytSearch(cleanQuery), 30000, 'Video search');
   } catch (e) {
+    logLine(`Video search failed: ${e.message}`);
+    await msg.react('❌').catch(() => {});
     return msg.reply(`Video search failed: ${e.message}`);
   }
 
-  if (!results.videos.length) return msg.reply('No result found.');
+  if (!results || !Array.isArray(results.videos) || !results.videos.length) {
+    await msg.react('❌').catch(() => {});
+    return msg.reply(`No video found for "${cleanQuery}".`);
+  }
 
   const video = results.videos[0];
   const title = safeFileName(video.title);
@@ -731,7 +845,7 @@ async function sendVideo(msg, query) {
       return msg.reply(fallbackYoutubeReply('video', video, 'invalid YouTube URL'));
     }
 
-    await new Promise((resolve, reject) => {
+    await withTimeout(new Promise((resolve, reject) => {
       const stream = ytdl(video.url, {
         quality: 'highest',
         filter: format => format.container === 'mp4' && format.hasAudio && format.hasVideo
@@ -741,12 +855,16 @@ async function sendVideo(msg, query) {
         .pipe(fs.createWriteStream(file))
         .on('finish', resolve)
         .on('error', reject);
-    });
+    }), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download');
 
+    assertUsableFile(file, MIN_VIDEO_BYTES, 'Video download');
     const media = MessageMedia.fromFilePath(file);
     media.filename = `${title}.mp4`;
+    await msg.react('✅').catch(() => {});
     await msg.reply(media, undefined, { caption: `${video.title}\n${video.url}` });
   } catch (e) {
+    logLine(`Video download failed: ${e.message}`);
+    await msg.react('❌').catch(() => {});
     await msg.reply(fallbackYoutubeReply('video', video, e.message));
   } finally {
     removeFile(file);
@@ -1101,7 +1219,7 @@ async function smartReply(name, prompt, mood, persona = '') {
 }
 
 async function handleStatusUpdate(client, session, msg, sessionNameValue) {
-  if (msg.from !== 'status@broadcast') return false;
+  if (msg.from !== 'status@broadcast' && msg.to !== 'status@broadcast') return false;
 
   const actions = [];
 
@@ -1116,6 +1234,9 @@ async function handleStatusUpdate(client, session, msg, sessionNameValue) {
   }
 
   if (session.statuslike && msg.react) {
+    if (!session.statusview && client.sendSeen) {
+      actions.push(client.sendSeen('status@broadcast').catch(e => logLine(`Status sendSeen failed (${sessionNameValue}): ${e.message}`)));
+    }
     actions.push(msg.react(session.statusReact || '💗').catch(e => logLine(`Status react failed (${sessionNameValue}): ${e.message}`)));
   }
 
@@ -1666,8 +1787,17 @@ async function start(name) {
 *Status*
 .viewstatus on/off
 .likestatus on/off
+.reactstatus emoji
 .setstatus text
 .autostatus on/off
+
+*Hosting Clients*
+.hosting add @user 30
+.hosting extend @user 7
+.hosting remind @user message
+.hosting status @user
+.hosting list
+.hosting remove @user
 
 *Owner*
 .ping
@@ -1692,7 +1822,7 @@ async function start(name) {
 .session add name
 .session remove name
 .session qr
-.session pair`);
+.session pair${hostingPromoText()}`);
       }
 
       if (text === '.ping') return msg.reply(`Pong. Session ${name} is alive.`);
@@ -1740,6 +1870,110 @@ async function start(name) {
       if (text === '.owner list') {
         if (!(await requireOwnerAccess(msg))) return;
         return msg.reply(ownerlock.owners.length ? ownerlock.owners.map(tag).join('\n') : 'No trusted owners saved.');
+      }
+
+      if (text.startsWith('.hosting add ')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        const parsed = parseHostingAdd(msg, raw.slice(13));
+        if (!parsed) return msg.reply('Use: .hosting add @user 30 or .hosting add 2547... 30');
+
+        const now = Date.now();
+        const display = await displayNameFor(client, parsed.target);
+        memory.hostingClients[parsed.target] = {
+          id: parsed.target,
+          addedBy: sender,
+          session: name,
+          totalDays: parsed.days,
+          startedAt: now,
+          expiresAt: now + parsed.days * DAY_MS,
+          createdAt: now,
+          lastReminderAt: null
+        };
+        save(MEMORY_FILE, memory);
+
+        const message = hostingStatusText(parsed.target, display, 'Your bot hosting period has started.');
+        await client.sendMessage(parsed.target, message).catch(e => logLine(`Hosting welcome failed (${name}): ${e.message}`));
+        return msg.reply(`Hosting client added: *${display}*\nDays: ${parsed.days}\nRemaining: ${parsed.days}`);
+      }
+
+      if (text.startsWith('.hosting extend ') || text.startsWith('.hosting renew ')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        const rawValue = raw.replace(/^\.hosting\s+(extend|renew)\s+/i, '');
+        const parsed = parseHostingAdd(msg, rawValue);
+        if (!parsed || !memory.hostingClients[parsed.target]) {
+          return msg.reply('Use: .hosting extend @user 7 or .hosting renew 2547... 30');
+        }
+
+        const now = Date.now();
+        const record = memory.hostingClients[parsed.target];
+        const baseExpiry = Math.max(Number(record.expiresAt || now), now);
+        record.expiresAt = baseExpiry + parsed.days * DAY_MS;
+        record.totalDays = Number(record.totalDays || 0) + parsed.days;
+        record.updatedAt = now;
+        save(MEMORY_FILE, memory);
+
+        const display = await displayNameFor(client, parsed.target);
+        const message = hostingStatusText(parsed.target, display, `Your hosting has been extended by ${parsed.days} day${parsed.days === 1 ? '' : 's'}.`);
+        await client.sendMessage(parsed.target, message).catch(e => logLine(`Hosting extension notice failed (${name}): ${e.message}`));
+        const stats = hostingClientStats(parsed.target);
+        return msg.reply(`Hosting extended: *${display}*\nAdded: ${parsed.days} day${parsed.days === 1 ? '' : 's'}\nRemaining: ${stats.remainingDays} day${stats.remainingDays === 1 ? '' : 's'}`);
+      }
+
+      if (text.startsWith('.hosting remind ')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        const mentioned = firstMention(msg);
+        const rawBody = raw.slice(16).trim();
+        const clientId = await hostingTargetFromInput(msg, rawBody);
+        if (!clientId || !memory.hostingClients[clientId]) {
+          return msg.reply('Use: .hosting remind @user your reminder message');
+        }
+
+        const hasReplyTarget = !mentioned && msg.hasQuotedMsg;
+        const reminderText = mentioned
+          ? rawBody.replace(/@\d+/g, '').trim()
+          : hasReplyTarget
+            ? rawBody
+            : rawBody.split(/\s+/).slice(1).join(' ').trim();
+        const display = await displayNameFor(client, clientId);
+        const message = hostingStatusText(clientId, display, reminderText || 'Please renew before your hosting days end.');
+        await client.sendMessage(clientId, message).catch(e => {
+          throw new Error(`Could not send reminder: ${e.message}`);
+        });
+        memory.hostingClients[clientId].lastReminderAt = Date.now();
+        memory.hostingClients[clientId].lastReminder = reminderText || 'Please renew before your hosting days end.';
+        save(MEMORY_FILE, memory);
+        return msg.reply(`Reminder sent to *${display}*.`);
+      }
+
+      if (text.startsWith('.hosting status')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        const target = await hostingTargetFromInput(msg, raw.slice(15));
+        if (!target || !memory.hostingClients[target]) return msg.reply('Use: .hosting status @user or .hosting status 2547...');
+        const display = await displayNameFor(client, target);
+        return msg.reply(hostingStatusText(target, display));
+      }
+
+      if (text === '.hosting list') {
+        if (!(await requireOwnerAccess(msg))) return;
+        const ids = Object.keys(memory.hostingClients || {});
+        if (!ids.length) return msg.reply('No hosting clients saved.');
+
+        const rows = [];
+        for (const id of ids) {
+          const stats = hostingClientStats(id);
+          rows.push(`${tag(id)} - ${stats.remainingDays} day${stats.remainingDays === 1 ? '' : 's'} left (${stats.expired ? 'expired' : 'active'})`);
+        }
+        return msg.reply(`*Hosting Clients*\n\n${rows.join('\n')}`);
+      }
+
+      if (text.startsWith('.hosting remove ')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        const target = await hostingTargetFromInput(msg, raw.slice(16));
+        if (!target || !memory.hostingClients[target]) return msg.reply('Use: .hosting remove @user or .hosting remove 2547...');
+        const display = await displayNameFor(client, target);
+        delete memory.hostingClients[target];
+        save(MEMORY_FILE, memory);
+        return msg.reply(`Hosting client removed: *${display}*`);
       }
 
       if (text === '.restart') {
@@ -2145,17 +2379,23 @@ async function start(name) {
       }
 
       if (text.startsWith('.setstatus ')) {
-        session.statusText = raw.slice(11).trim();
+        const nextStatus = raw.slice(11).trim();
+        if (!nextStatus) return msg.reply('Write status text after .setstatus');
+        session.statusText = nextStatus;
         save(MEMORY_FILE, memory);
-        await client.setStatus(session.statusText).catch(() => {});
-        return msg.reply('Status text saved.');
+        await client.setStatus(nextStatus).catch(e => {
+          logLine(`Status set failed (${name}): ${e.message}`);
+        });
+        return msg.reply(`Status updated:\n${nextStatus}`);
       }
 
       if (text === '.autostatus on' || text === '.autostatus off') {
         session.autostatus = text.endsWith(' on');
         save(MEMORY_FILE, memory);
         if (session.autostatus && session.statusText) {
-          await client.setStatus(session.statusText).catch(() => {});
+          await client.setStatus(session.statusText).catch(e => {
+            logLine(`Auto-status set failed (${name}): ${e.message}`);
+          });
         }
         return msg.reply(`Auto-status ${session.autostatus ? 'ON' : 'OFF'}.`);
       }
@@ -2163,13 +2403,14 @@ async function start(name) {
       if (text === '.viewstatus on' || text === '.viewstatus off' || text === '.statusview on' || text === '.statusview off') {
         session.statusview = text.endsWith(' on');
         save(MEMORY_FILE, memory);
-        return msg.reply(`Status auto-view ${session.statusview ? 'ON' : 'OFF'}. When a new status arrives, the bot will try to view it immediately.`);
+        return msg.reply(`Status auto-view ${session.statusview ? 'ON' : 'OFF'}.`);
       }
 
       if (text === '.likestatus on' || text === '.likestatus off' || text === '.statuslike on' || text === '.statuslike off') {
         session.statuslike = text.endsWith(' on');
+        if (session.statuslike) session.statusview = true;
         save(MEMORY_FILE, memory);
-        return msg.reply(`Status auto-like ${session.statuslike ? 'ON' : 'OFF'}. When a new status arrives, the bot will try to react immediately.`);
+        return msg.reply(`Status auto-like ${session.statuslike ? 'ON' : 'OFF'}.${session.statuslike ? ' Auto-view is ON too.' : ''}`);
       }
 
       if (text.startsWith('.reactstatus ')) {
@@ -2804,7 +3045,10 @@ async function start(name) {
           );
         }
 
-        const media = await source.downloadMedia().catch(() => null);
+        const media = await source.downloadMedia().catch(e => {
+          logLine(`View-once download failed (${name}): ${e.message}`);
+          return null;
+        });
         if (!media) {
           return msg.reply(
             'I could not open that view-once media.\n\n' +
@@ -3023,12 +3267,16 @@ async function start(name) {
         return msg.reply(reply);
       }
 
-      if (isGroup && g.chatbot && botId && mentionedIds.includes(botId)) {
+      if (isGroup && botId && mentionedIds.includes(botId) && !text.startsWith('.')) {
+        if (!g.chatbot) {
+          return msg.reply(`Githinji is online. Send .menu to see commands.${hostingPromoText()}`);
+        }
+
         const custom = customAutoReply(g, raw, displayName);
         const reply = custom || (session.smart
           ? await smartReply(displayName, raw, g.mood, session.persona)
           : feminine(displayName, raw, g.mood));
-        return msg.reply(reply);
+        return msg.reply(`${reply}${hostingPromoText()}`);
       }
     } catch (e) {
       console.log('ERROR:', e.message);
@@ -3038,7 +3286,7 @@ async function start(name) {
 
   client.on('message_create', async msg => {
     try {
-      if (msg.from === 'status@broadcast') {
+      if (msg.from === 'status@broadcast' || msg.to === 'status@broadcast') {
         client.emit('message', msg);
         return;
       }

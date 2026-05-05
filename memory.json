@@ -1,0 +1,26 @@
+{
+  "users": {},
+  "groups": {},
+  "sessions": {
+    "main": {
+      "pm": false,
+      "mood": "normal",
+      "away": false,
+      "smart": false,
+      "typing": false,
+      "autoreact": false,
+      "autoreactEmoji": "💗",
+      "statusview": false,
+      "statuslike": false,
+      "statusReact": "💗",
+      "online": false,
+      "autostatus": false,
+      "statusText": "Githinji Bot online",
+      "persona": null
+    }
+  },
+  "warns": {},
+  "savedContacts": {},
+  "inviteOptIns": {},
+  "hostingClients": {}
+}
