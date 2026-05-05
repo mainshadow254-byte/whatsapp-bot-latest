@@ -20,6 +20,7 @@ const MEMORY_FILE = './memory.json';
 const SESSION_FILE = './sessions.json';
 const OWNERLOCK_FILE = './ownerlock.json';
 const SCHEDULE_FILE = './schedules.json';
+const YOUTUBE_COOKIES_FILE = path.join(__dirname, 'youtube-cookies.txt');
 const SCHEDULE_UTC_OFFSET_HOURS = 3;
 const SCHEDULE_TIMEZONE_LABEL = 'Africa/Nairobi';
 const AUDIO_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
@@ -717,6 +718,14 @@ async function ytDlpDownload(kind, videoUrl, outputPath) {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36'
   ];
 
+  if (fs.existsSync(YOUTUBE_COOKIES_FILE)) {
+    baseArgs.push('--cookies', YOUTUBE_COOKIES_FILE);
+  }
+
+  if (process.env.YT_DLP_PROXY) {
+    baseArgs.push('--proxy', process.env.YT_DLP_PROXY);
+  }
+
   const args = kind === 'video'
     ? [
         ...baseArgs,
@@ -842,6 +851,7 @@ async function sendSong(msg, query) {
   let results;
   try {
     await msg.react('⏳').catch(() => {});
+    logLine(`Song request: ${cleanQuery}`);
     results = await withTimeout(ytSearch(cleanQuery), 30000, 'Song search');
   } catch (e) {
     logLine(`Song search failed: ${e.message}`);
@@ -903,6 +913,7 @@ async function sendVideo(msg, query) {
   let results;
   try {
     await msg.react('⏳').catch(() => {});
+    logLine(`Video request: ${cleanQuery}`);
     results = await withTimeout(ytSearch(cleanQuery), 30000, 'Video search');
   } catch (e) {
     logLine(`Video search failed: ${e.message}`);
