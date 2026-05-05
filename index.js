@@ -92,26 +92,35 @@ const scheduleIntervals = {};
 const processedMessages = new Set();
 const botDeletedMessageIds = new Set();
 
-const BADWORDS_VERSION = 3;
+const BADWORDS_VERSION = 4;
 const DEFAULT_BADWORDS = [
   'fuck',
   'fucking',
   'fucker',
   'motherfucker',
+  'mf',
   'shit',
   'bullshit',
   'bitch',
+  'son of a bitch',
   'bitches',
   'asshole',
+  'ass',
+  'dumbass',
+  'jackass',
   'bastard',
   'damn',
+  'bloody',
   'dick',
+  'dickhead',
+  'prick',
   'cock',
   'pussy',
   'cunt',
   'whore',
   'slut',
   'hoe',
+  'thot',
   'porn',
   'sex',
   'nude',
@@ -122,26 +131,51 @@ const DEFAULT_BADWORDS = [
   'moron',
   'idiot',
   'stupid',
+  'fool',
+  'loser',
+  'trash',
+  'garbage',
+  'scumbag',
+  'scammer',
+  'fraudster',
+  'kill yourself',
+  'kys',
+  'suck my',
+  'eat shit',
   'nonsense',
   'shenzi',
   'umbwa',
+  'mbwa',
   'fala',
+  'fala wewe',
   'mjinga',
   'mjinga sana',
   'mpumbavu',
   'pumbavu',
+  'puuzi',
   'mshenzi',
   'ngombe',
+  "ng'ombe",
+  'ngombe wewe',
+  'kichwa maji',
+  'kinyonga',
   'matako',
   'kuma',
+  'kumamako',
+  'kuma yako',
   'kumamake',
   'kumamamako',
   'kumbavu',
+  'mamako',
+  'nyoko',
+  'nyokonyoko',
   'mkundu',
   'mavi',
+  'mavi ya kuku',
   'kinyesi',
   'malaya',
   'kahaba',
+  'mkora',
   'ngono',
   'uchi',
   'tombwa',
@@ -155,7 +189,13 @@ const DEFAULT_BADWORDS = [
   'shoga',
   'firauni',
   'msenge',
-  'mavi ya kuku',
+  'takataka',
+  'enda huko',
+  'enda zako',
+  'nyamaza',
+  'nyamaza wewe',
+  'shetani',
+  'laana',
   'scam',
   'conman',
   'fraud',
@@ -642,7 +682,13 @@ Anyone trying to trade secretly, rush payments, avoid admins, or move deals to i
 
 function badwordDetected(g, text) {
   const body = String(text || '').toLowerCase();
-  return g.badwords.find(word => body.includes(String(word).toLowerCase()));
+  return g.badwords.find(word => {
+    const cleanWord = String(word || '').trim().toLowerCase();
+    if (!cleanWord) return false;
+    const escaped = cleanWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (cleanWord.includes(' ') || cleanWord.includes("'")) return body.includes(cleanWord);
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(body);
+  });
 }
 
 function isKenyanNumber(id) {
@@ -2111,6 +2157,7 @@ async function start(name) {
 .antimention limit 5
 .antispam on/off
 .antibadword on/off
+.antibadword test text
 .antiword badword
 .delword badword
 .badwords
@@ -2894,9 +2941,17 @@ async function start(name) {
         g.antibadword = text.endsWith(' on');
         if (g.antibadword && (!Array.isArray(g.badwords) || !g.badwords.filter(Boolean).length)) {
           g.badwords = [...DEFAULT_BADWORDS];
+          g.badwordsVersion = BADWORDS_VERSION;
         }
         save(MEMORY_FILE, memory);
         return msg.reply(`Anti-badword ${g.antibadword ? 'ON' : 'OFF'}. Words saved: ${g.badwords.length}.`);
+      }
+
+      if (text.startsWith('.antibadword test ')) {
+        if (!isGroup) return msg.reply('This command works in groups only.');
+        const sample = raw.slice(18).trim();
+        const word = badwordDetected(g, sample);
+        return msg.reply(word ? `Detected bad word: ${word}` : 'No bad word detected in that text.');
       }
 
       if (text.startsWith('.antiword ')) {
