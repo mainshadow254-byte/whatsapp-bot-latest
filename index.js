@@ -3,11 +3,13 @@ const qrcode = require('qrcode-terminal');
 const qrImage = require('qrcode');
 const ytdl = require('@distube/ytdl-core');
 const ytSearch = require('yt-search');
+const ytScraper = require('@vreden/youtube_scraper');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { pipeline } = require('stream/promises');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -675,6 +677,34 @@ function convertYoutubeToMp3(url, outputPath) {
   });
 }
 
+async function downloadUrlToFile(url, outputPath) {
+  const response = await fetch(url, {
+    headers: {
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36'
+    }
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`download server returned ${response.status}`);
+  }
+
+  await pipeline(response.body, fs.createWriteStream(outputPath));
+}
+
+async function scraperDownload(kind, videoUrl, outputPath) {
+  const result = kind === 'video'
+    ? await ytScraper.ytmp4(videoUrl, 360)
+    : await ytScraper.ytmp3(videoUrl, 128);
+
+  const downloadUrl = result && result.download && result.download.url;
+  if (!result || result.status !== true || !downloadUrl) {
+    throw new Error('scraper did not return a download link');
+  }
+
+  await downloadUrlToFile(downloadUrl, outputPath);
+  return result;
+}
+
 function removeFile(file) {
   fs.unlink(file, () => {});
 }
@@ -794,7 +824,12 @@ async function sendSong(msg, query) {
       return msg.reply(fallbackYoutubeReply('song', video, 'invalid YouTube URL'));
     }
 
-    await withTimeout(convertYoutubeToMp3(video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download');
+    try {
+      await withTimeout(scraperDownload('audio', video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download');
+    } catch (scraperError) {
+      logLine(`Song scraper fallback (${scraperError.message})`);
+      await withTimeout(convertYoutubeToMp3(video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download fallback');
+    }
     assertUsableFile(file, MIN_AUDIO_BYTES, 'Song download');
     const media = MessageMedia.fromFilePath(file);
     media.filename = `${title}.mp3`;
@@ -845,17 +880,22 @@ async function sendVideo(msg, query) {
       return msg.reply(fallbackYoutubeReply('video', video, 'invalid YouTube URL'));
     }
 
-    await withTimeout(new Promise((resolve, reject) => {
-      const stream = ytdl(video.url, {
-        quality: 'highest',
-        filter: format => format.container === 'mp4' && format.hasAudio && format.hasVideo
-      });
-      stream.on('error', reject);
-      stream
-        .pipe(fs.createWriteStream(file))
-        .on('finish', resolve)
-        .on('error', reject);
-    }), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download');
+    try {
+      await withTimeout(scraperDownload('video', video.url, file), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download');
+    } catch (scraperError) {
+      logLine(`Video scraper fallback (${scraperError.message})`);
+      await withTimeout(new Promise((resolve, reject) => {
+        const stream = ytdl(video.url, {
+          quality: 'highest',
+          filter: format => format.container === 'mp4' && format.hasAudio && format.hasVideo
+        });
+        stream.on('error', reject);
+        stream
+          .pipe(fs.createWriteStream(file))
+          .on('finish', resolve)
+          .on('error', reject);
+      }), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download fallback');
+    }
 
     assertUsableFile(file, MIN_VIDEO_BYTES, 'Video download');
     const media = MessageMedia.fromFilePath(file);
