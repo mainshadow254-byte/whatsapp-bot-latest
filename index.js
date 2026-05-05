@@ -984,10 +984,12 @@ async function sendVideo(msg, query) {
     } catch (sendError) {
       logLine(`Video inline send failed, retrying as document: ${sendError.message}`);
       await sleep(2000);
-      await msg.reply(media, undefined, {
+      const documentMedia = MessageMedia.fromFilePath(file);
+      documentMedia.filename = `${title}.mp4`;
+      await msg.getChat().then(chat => chat.sendMessage(documentMedia, {
         caption,
         sendMediaAsDocument: true
-      });
+      }));
     }
   } catch (e) {
     logLine(`Video download failed: ${e && e.stack ? e.stack : e.message}`);
