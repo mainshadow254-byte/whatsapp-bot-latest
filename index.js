@@ -680,9 +680,20 @@ Anyone trying to trade secretly, rush payments, avoid admins, or move deals to i
 ⚠️ Ignore this warning at your own risk.`;
 }
 
+function antibadwordWarning(displayName, word, targetId) {
+  return `*Anti-Badword Warning*
+
+${tag(targetId)} (${displayName})
+
+That message contains a blocked word: ${word}
+
+Keep the group respectful. Insults, harassment, abusive language, and vulgar words are not allowed here.`;
+}
+
 function badwordDetected(g, text) {
   const body = String(text || '').toLowerCase();
-  return g.badwords.find(word => {
+  const words = [...new Set([...(g.badwords || []), ...DEFAULT_BADWORDS])];
+  return words.find(word => {
     const cleanWord = String(word || '').trim().toLowerCase();
     if (!cleanWord) return false;
     const escaped = cleanWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2169,9 +2180,16 @@ async function start(name) {
 
       if (isGroup && g.antibadword && !text.startsWith('.')) {
         const word = badwordDetected(g, raw);
-        if (word && !msg.fromMe && sender !== botId) {
+        if (word) {
+          logLine(`[${name}] anti-badword hit in ${from}: sender=${sender} word=${word} body=${raw.slice(0, 80)}`);
+          if (msg.fromMe || sender === botId) return;
+          const contact = await contactFor(client, sender);
+          const senderName = await displayNameFor(client, sender);
           await deleteAsBot(msg).catch(e => logLine(`Anti-badword delete failed (${name}): ${e.message}`));
-          await warnUser(client, msg, sender, `Bad word detected: ${word}`);
+          await msg.reply(antibadwordWarning(senderName, word, sender), undefined, {
+            mentions: contact ? [contact] : []
+          }).catch(e => logLine(`Anti-badword reply failed (${name}): ${e.message}`));
+          await warnUser(client, msg, sender, `Bad word detected: ${word}`).catch(e => logLine(`Anti-badword warn failed (${name}): ${e.message}`));
           return;
         }
       }
@@ -2294,6 +2312,7 @@ async function start(name) {
 .antibadword on/off
 .antibadword status
 .antibadword test text
+.badworddebug
 .antiword badword
 .delword badword
 .badwords
@@ -3087,8 +3106,24 @@ async function start(name) {
         if (!isGroup) return msg.reply('This command works in groups only.');
         return msg.reply(
           `Anti-badword: ${g.antibadword ? 'ON' : 'OFF'}\n` +
-          `Bad words: ${g.badwords.length}\n` +
+          `Bad words: ${[...new Set([...(g.badwords || []), ...DEFAULT_BADWORDS])].length}\n` +
           `Mode: deletes if possible, then warns. Admins are checked too.`
+        );
+      }
+
+      if (text === '.badworddebug') {
+        if (!isGroup) return msg.reply('This command works in groups only.');
+        const chat = await msg.getChat();
+        const participant = chat.participants.find(p => p.id._serialized === sender);
+        return msg.reply(
+          `Anti-badword: ${g.antibadword ? 'ON' : 'OFF'}\n` +
+          `Chat: ${from}\n` +
+          `Sender: ${sender}\n` +
+          `Sender admin: ${participant && participant.isAdmin ? 'YES' : 'NO'}\n` +
+          `Bot: ${botId || 'unknown'}\n` +
+          `Words loaded: ${[...new Set([...(g.badwords || []), ...DEFAULT_BADWORDS])].length}\n` +
+          `Matako test: ${badwordDetected(g, 'Matako') || 'none'}\n` +
+          `Shit test: ${badwordDetected(g, 'Shit') || 'none'}`
         );
       }
 
