@@ -30,7 +30,10 @@ const MIN_VIDEO_BYTES = 500 * 1024;
 const MAX_VIDEO_BYTES = Number(process.env.MAX_VIDEO_MB || 45) * 1024 * 1024;
 const YT_DLP_VIDEO_HEIGHT = Number(process.env.YT_DLP_VIDEO_HEIGHT || 360);
 const HOSTING_PROMO = 'For bot hosting call +254 772 418884.';
+const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
+const MONTH_MS = 30 * DAY_MS;
 
 function load(file, def) {
   try {
@@ -551,7 +554,9 @@ function sessionSettings(name) {
       createdAt: Date.now(),
       leaseStartedAt: null,
       leaseExpiresAt: null,
+      leaseMs: null,
       leaseDays: null,
+      leasePaused: false,
       botId: null
     };
     save(MEMORY_FILE, memory);
@@ -609,33 +614,54 @@ function sessionLeaseStats(name) {
   const now = Date.now();
   const startedAt = Number(session.leaseStartedAt || session.createdAt || now);
   const expiresAt = Number(session.leaseExpiresAt || 0);
-  const totalDays = Number(session.leaseDays || (expiresAt ? Math.ceil((expiresAt - startedAt) / DAY_MS) : 0));
+  const totalMs = Number(session.leaseMs || (session.leaseDays ? Number(session.leaseDays) * DAY_MS : 0) || (expiresAt ? Math.max(0, expiresAt - startedAt) : 0));
+  const totalDays = Math.ceil(totalMs / DAY_MS);
   const connectedDays = Math.max(0, Math.floor((now - startedAt) / DAY_MS));
-  const remainingDays = expiresAt ? Math.max(0, Math.ceil((expiresAt - now) / DAY_MS)) : null;
+  const remainingMs = expiresAt ? Math.max(0, expiresAt - now) : null;
+  const remainingDays = remainingMs === null ? null : Math.ceil(remainingMs / DAY_MS);
+  const paused = Boolean(session.leasePaused);
+  const expired = Boolean(expiresAt && expiresAt <= now);
 
   return {
     startedAt,
     expiresAt,
+    totalMs,
     totalDays,
     connectedDays,
+    remainingMs,
     remainingDays,
-    expired: Boolean(expiresAt && expiresAt <= now),
-    unlimited: !expiresAt
+    paused,
+    expired,
+    blocked: paused || expired,
+    unlimited: !expiresAt && !paused
   };
+}
+
+function formatDurationMs(ms) {
+  const value = Math.max(0, Number(ms || 0));
+  if (value <= 0) return '0 hours';
+  if (value >= DAY_MS) {
+    const days = Math.ceil(value / DAY_MS);
+    return `${days} day${days === 1 ? '' : 's'}`;
+  }
+  const hours = Math.max(1, Math.ceil(value / HOUR_MS));
+  return `${hours} hour${hours === 1 ? '' : 's'}`;
 }
 
 function sessionLeaseLine(name) {
   const stats = sessionLeaseStats(name);
   if (!stats) return `${name}: missing`;
+  if (stats.paused) return `${name}: paused`;
   if (stats.unlimited) return `${name}: unlimited`;
-  return `${name}: ${stats.remainingDays} day${stats.remainingDays === 1 ? '' : 's'} left, connected ${stats.connectedDays} day${stats.connectedDays === 1 ? '' : 's'} (${stats.expired ? 'expired' : 'active'})`;
+  return `${name}: ${formatDurationMs(stats.remainingMs)} left, connected ${stats.connectedDays} day${stats.connectedDays === 1 ? '' : 's'} (${stats.expired ? 'expired' : 'active'})`;
 }
 
 function sessionPlanLabel(name) {
   const stats = sessionLeaseStats(name);
   if (!stats) return 'unknown plan';
+  if (stats.paused) return 'paused';
   if (stats.unlimited) return 'unlimited premium';
-  return `${stats.totalDays} day${stats.totalDays === 1 ? '' : 's'} premium`;
+  return `${formatDurationMs(stats.totalMs)} premium`;
 }
 
 function sessionWelcomeText(displayName, name) {
@@ -646,37 +672,79 @@ Subscription: ${sessionPlanLabel(name)}
 Enjoy Githinji Bot. Use .menu to see commands.`;
 }
 
+function subscriptionExpiredText(senderId, status = 'Expired') {
+  return `⚠️ SUBSCRIPTION ${status.toUpperCase()}
+
+Hello ${tag(senderId)}, your bot subscription has ended.
+
+Your access to premium bot features has now been paused. To continue enjoying commands, automation, group protection, downloads, AI replies, and other active services, please renew your subscription.
+
+Kindly contact the bot owner/admin to renew and reactivate your access.
+
+⏳ Status: ${status}
+🔒 Access: Paused
+✅ Renew to continue using the bot.`;
+}
+
 function parsePlanDays(rawPlan) {
   const plan = String(rawPlan || '').trim().toLowerCase();
   if (!plan) return { days: null, unlimited: false, label: '' };
   if (['unlimited', 'forever', 'lifetime', 'permanent'].includes(plan)) {
-    return { days: null, unlimited: true, label: 'unlimited' };
+    return { ms: null, days: null, unlimited: true, label: 'unlimited' };
   }
 
-  const match = plan.match(/^(\d+)\s*(d|day|days|w|week|weeks|m|month|months|y|year|years)?$/);
+  const match = plan.match(/^(\d+)\s*(h|hr|hrs|hour|hours|d|day|days|w|week|weeks|m|mo|month|months|y|year|years)?$/);
   if (!match) return { days: null, unlimited: false, label: plan };
 
   const amount = Number(match[1]);
   const unit = match[2] || 'd';
   const multipliers = {
-    d: 1,
-    day: 1,
-    days: 1,
-    w: 7,
-    week: 7,
-    weeks: 7,
-    m: 30,
-    month: 30,
-    months: 30,
-    y: 365,
-    year: 365,
-    years: 365
+    h: HOUR_MS,
+    hr: HOUR_MS,
+    hrs: HOUR_MS,
+    hour: HOUR_MS,
+    hours: HOUR_MS,
+    d: DAY_MS,
+    day: DAY_MS,
+    days: DAY_MS,
+    w: WEEK_MS,
+    week: WEEK_MS,
+    weeks: WEEK_MS,
+    m: MONTH_MS,
+    mo: MONTH_MS,
+    month: MONTH_MS,
+    months: MONTH_MS,
+    y: 365 * DAY_MS,
+    year: 365 * DAY_MS,
+    years: 365 * DAY_MS
   };
+  const displayUnits = {
+    h: 'h',
+    hr: 'h',
+    hrs: 'h',
+    hour: 'h',
+    hours: 'h',
+    d: 'd',
+    day: 'd',
+    days: 'd',
+    w: 'w',
+    week: 'w',
+    weeks: 'w',
+    m: 'm',
+    mo: 'm',
+    month: 'm',
+    months: 'm',
+    y: 'y',
+    year: 'y',
+    years: 'y'
+  };
+  const ms = amount * (multipliers[unit] || DAY_MS);
 
   return {
-    days: amount * (multipliers[unit] || 1),
+    ms,
+    days: Math.ceil(ms / DAY_MS),
     unlimited: false,
-    label: plan
+    label: `${amount}${displayUnits[unit] || 'd'}`
   };
 }
 
@@ -687,6 +755,7 @@ function parseSessionLeaseInput(rawValue) {
   if (!name) return null;
   return {
     name,
+    durationMs: Number.isInteger(plan.ms) && plan.ms > 0 ? plan.ms : null,
     days: Number.isInteger(plan.days) && plan.days > 0 ? plan.days : null,
     unlimited: plan.unlimited,
     planLabel: plan.label
@@ -2167,13 +2236,11 @@ async function start(name) {
       const isSessionOwnerCommand = Boolean(msg.fromMe || (botId && sender === botId));
       const lease = sessionLeaseStats(name);
 
-      if (name !== 'main' && lease && lease.expired && isCommand && !text.startsWith('.session ')) {
-        return msg.reply(
-          `This bot session has expired.\n` +
-          `Session: ${name}\n` +
-          `Connected: ${lease.connectedDays} day${lease.connectedDays === 1 ? '' : 's'}\n` +
-          `${HOSTING_PROMO}`
-        );
+      if (name !== 'main' && lease && lease.blocked && isCommand && !text.startsWith('.session ')) {
+        const contact = await contactFor(client, sender);
+        return msg.reply(subscriptionExpiredText(sender, lease.paused ? 'Paused' : 'Expired'), undefined, {
+          mentions: contact ? [contact] : []
+        });
       }
 
       cacheMessage(msg);
@@ -2433,11 +2500,15 @@ async function start(name) {
 .schedule run
 .schedule cancel id
 .session list
-.session add name 7d/10w/30d/unlimited
-.add session name 7d/unlimited
+.session add name 12h/7d/10w/3m/unlimited
+.add session name 12h/7d/unlimited
 .session status name
-.session extend name 7d/10w/30d
+.session extend name 12h/7d/10w/3m
+.session reduce name 12h/7d/10w/3m
 .session renew name unlimited
+.session pause name
+.session resume name
+.session cancel name
 .session remove name
 .session qr
 .session pair name 2547...${hostingPromoText()}`);
@@ -3657,27 +3728,31 @@ async function start(name) {
         const parsed = parseSessionLeaseInput(raw.slice(13));
         const nameToAdd = parsed && parsed.name;
         if (!nameToAdd) return msg.reply('Write a session name.');
-        if (!parsed.days && !parsed.unlimited) return msg.reply('Use: .session add name 7d, .session add name 10w, .session add name 30d, or .session add name unlimited');
+        if (!parsed.durationMs && !parsed.unlimited) return msg.reply('Use: .session add name 12h, 7d, 10w, 3m, or unlimited');
         if (sessions.sessions.includes(nameToAdd)) return msg.reply('Session already exists.');
 
         sessions.sessions.push(nameToAdd);
         const nextSession = sessionSettings(nameToAdd);
         const now = Date.now();
-        if (parsed.days) {
+        if (parsed.durationMs) {
           nextSession.leaseStartedAt = now;
-          nextSession.leaseExpiresAt = now + parsed.days * DAY_MS;
+          nextSession.leaseExpiresAt = now + parsed.durationMs;
+          nextSession.leaseMs = parsed.durationMs;
           nextSession.leaseDays = parsed.days;
+          nextSession.leasePaused = false;
           nextSession.createdBy = sender;
         } else if (parsed.unlimited) {
           nextSession.leaseStartedAt = now;
           nextSession.leaseExpiresAt = null;
+          nextSession.leaseMs = null;
           nextSession.leaseDays = null;
+          nextSession.leasePaused = false;
           nextSession.createdBy = sender;
         }
         save(SESSION_FILE, sessions);
         save(MEMORY_FILE, memory);
         start(nameToAdd);
-        const planText = parsed.unlimited ? 'unlimited' : `${parsed.planLabel} (${parsed.days} day${parsed.days === 1 ? '' : 's'})`;
+        const planText = parsed.unlimited ? 'unlimited' : `${parsed.planLabel} (${formatDurationMs(parsed.durationMs)})`;
         return msg.reply(
           `Session ${nameToAdd} added for ${planText}.\n` +
           `Use .session pair ${nameToAdd} 2547... for a far user, or .session qr ${nameToAdd} for QR.`
@@ -3689,7 +3764,7 @@ async function start(name) {
         if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
         const rawValue = raw.replace(/^\.session\s+(extend|renew)\s+/i, '');
         const parsed = parseSessionLeaseInput(rawValue);
-        if (!parsed || (!parsed.days && !parsed.unlimited)) return msg.reply('Use: .session extend name 7d or .session renew name unlimited');
+        if (!parsed || (!parsed.durationMs && !parsed.unlimited)) return msg.reply('Use: .session extend name 12h, 7d, 10w, 3m or .session renew name unlimited');
         if (!sessions.sessions.includes(parsed.name)) return msg.reply('Session not found.');
 
         const targetSession = sessionSettings(parsed.name);
@@ -3697,7 +3772,9 @@ async function start(name) {
         if (parsed.unlimited && !parsed.days) {
           targetSession.leaseStartedAt = targetSession.leaseStartedAt || now;
           targetSession.leaseExpiresAt = null;
+          targetSession.leaseMs = null;
           targetSession.leaseDays = null;
+          targetSession.leasePaused = false;
           targetSession.updatedAt = now;
           save(MEMORY_FILE, memory);
           return msg.reply(`Session ${parsed.name} is now unlimited.\n${sessionLeaseLine(parsed.name)}`);
@@ -3705,12 +3782,79 @@ async function start(name) {
 
         const baseExpiry = Math.max(Number(targetSession.leaseExpiresAt || now), now);
         targetSession.leaseStartedAt = targetSession.leaseStartedAt || now;
-        targetSession.leaseExpiresAt = baseExpiry + parsed.days * DAY_MS;
+        targetSession.leaseExpiresAt = baseExpiry + parsed.durationMs;
+        targetSession.leaseMs = Number(targetSession.leaseMs || 0) + parsed.durationMs;
         targetSession.leaseDays = Number(targetSession.leaseDays || 0) + parsed.days;
+        targetSession.leasePaused = false;
         targetSession.updatedAt = now;
         save(MEMORY_FILE, memory);
 
-        return msg.reply(`Session ${parsed.name} extended by ${parsed.days} day${parsed.days === 1 ? '' : 's'}.\n${sessionLeaseLine(parsed.name)}`);
+        return msg.reply(`Session ${parsed.name} extended by ${parsed.planLabel} (${formatDurationMs(parsed.durationMs)}).\n${sessionLeaseLine(parsed.name)}`);
+      }
+
+      if (text.startsWith('.session reduce ')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
+        const parsed = parseSessionLeaseInput(raw.slice(16));
+        if (!parsed || !parsed.durationMs) return msg.reply('Use: .session reduce name 12h, 7d, 10w, or 3m');
+        if (!sessions.sessions.includes(parsed.name)) return msg.reply('Session not found.');
+
+        const targetSession = sessionSettings(parsed.name);
+        if (!targetSession.leaseExpiresAt) return msg.reply('Unlimited sessions do not have duration to reduce. Use .session cancel name or set a new limited session.');
+
+        const now = Date.now();
+        targetSession.leaseExpiresAt = Math.max(now, Number(targetSession.leaseExpiresAt) - parsed.durationMs);
+        targetSession.leaseMs = Math.max(0, Number(targetSession.leaseMs || 0) - parsed.durationMs);
+        targetSession.leaseDays = Math.ceil(Number(targetSession.leaseMs || 0) / DAY_MS);
+        targetSession.updatedAt = now;
+        save(MEMORY_FILE, memory);
+        return msg.reply(`Session ${parsed.name} reduced by ${parsed.planLabel} (${formatDurationMs(parsed.durationMs)}).\n${sessionLeaseLine(parsed.name)}`);
+      }
+
+      if (text.startsWith('.session pause ')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
+        const targetName = sessionName(raw.slice(15));
+        if (!targetName) return msg.reply('Use: .session pause name');
+        if (!sessions.sessions.includes(targetName)) return msg.reply('Session not found.');
+        const targetSession = sessionSettings(targetName);
+        targetSession.leasePaused = true;
+        targetSession.updatedAt = Date.now();
+        save(MEMORY_FILE, memory);
+        return msg.reply(`Session ${targetName} paused. Premium access is now blocked in real time.`);
+      }
+
+      if (text.startsWith('.session resume ')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
+        const targetName = sessionName(raw.slice(16));
+        if (!targetName) return msg.reply('Use: .session resume name');
+        if (!sessions.sessions.includes(targetName)) return msg.reply('Session not found.');
+        const targetSession = sessionSettings(targetName);
+        const stats = sessionLeaseStats(targetName);
+        if (stats && stats.expired) return msg.reply(`Session ${targetName} is expired. Use .session extend ${targetName} 7d or .session renew ${targetName} unlimited.`);
+        targetSession.leasePaused = false;
+        targetSession.updatedAt = Date.now();
+        save(MEMORY_FILE, memory);
+        return msg.reply(`Session ${targetName} resumed.\n${sessionLeaseLine(targetName)}`);
+      }
+
+      if (text.startsWith('.session cancel ')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
+        const targetName = sessionName(raw.slice(16));
+        if (!targetName) return msg.reply('Use: .session cancel name');
+        if (!sessions.sessions.includes(targetName)) return msg.reply('Session not found.');
+        const targetSession = sessionSettings(targetName);
+        targetSession.leaseStartedAt = targetSession.leaseStartedAt || Date.now();
+        targetSession.leaseExpiresAt = Date.now();
+        targetSession.leaseMs = 0;
+        targetSession.leaseDays = 0;
+        targetSession.leasePaused = false;
+        targetSession.cancelledAt = Date.now();
+        targetSession.updatedAt = Date.now();
+        save(MEMORY_FILE, memory);
+        return msg.reply(`Session ${targetName} subscription cancelled. Premium access is now expired.`);
       }
 
       if (text.startsWith('.session status')) {
@@ -3719,14 +3863,16 @@ async function start(name) {
         if (!sessions.sessions.includes(requested)) return msg.reply('Session not found.');
         const details = sessionSettings(requested);
         const stats = sessionLeaseStats(requested);
+        const planValue = stats.paused && !stats.expiresAt ? 'Paused unlimited' : stats.unlimited ? 'Unlimited' : formatDurationMs(stats.totalMs);
+        const remainingValue = stats.paused && !stats.expiresAt ? 'Paused' : stats.unlimited ? 'Unlimited' : formatDurationMs(stats.remainingMs);
         return msg.reply(
           `*Session Status*\n\n` +
           `Name: ${requested}\n` +
           `Number: ${details.botId || 'not linked yet'}\n` +
-          `Plan: ${stats.unlimited ? 'Unlimited' : `${stats.totalDays} day${stats.totalDays === 1 ? '' : 's'}`}\n` +
+          `Plan: ${planValue}\n` +
           `Connected: ${stats.connectedDays} day${stats.connectedDays === 1 ? '' : 's'}\n` +
-          `Remaining: ${stats.unlimited ? 'Unlimited' : `${stats.remainingDays} day${stats.remainingDays === 1 ? '' : 's'}`}\n` +
-          `Status: ${stats.expired ? 'Expired' : 'Active'}`
+          `Remaining: ${remainingValue}\n` +
+          `Status: ${stats.paused ? 'Paused' : stats.expired ? 'Expired' : 'Active'}`
         );
       }
 
