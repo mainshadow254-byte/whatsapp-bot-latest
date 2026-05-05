@@ -2310,17 +2310,8 @@ async function start(name) {
 .antimention limit 5
 .antispam on/off
 .antibadword on/off
-.antiword badword on/off
-.antibadword status
-.antibadword test text
-.badworddebug
-.antiword badword
-.delword badword
-.badwords
 .antidelete on/off
 .antisale on/off
-.antisale status
-.antisale test text
 .antiviewonce on/off
 .antiforeign on/off
 .antifake on/off
@@ -3025,30 +3016,14 @@ async function start(name) {
         return msg.reply(`Anti-mention limit set to ${limit}.`);
       }
 
-      if (text === '.antisale status') {
-        if (!isGroup) return msg.reply('This command works in groups only.');
-        return msg.reply(
-          `Anti-sale: ${g.antisale ? 'ON' : 'OFF'}\n` +
-          `Sale keywords: ${SALE_KEYWORDS.length}\n` +
-          `Admins are ignored. Normal members are warned with the strict notice.`
-        );
-      }
-
-      if (text.startsWith('.antisale test ')) {
-        if (!isGroup) return msg.reply('This command works in groups only.');
-        const sample = raw.slice(15).trim();
-        const keyword = saleKeywordDetected(sample);
-        return msg.reply(keyword ? `Detected sale keyword: ${keyword}` : 'No sale keyword detected in that text.');
-      }
-
-      if (text === '.antisale on' || text === '.anti-sale on') {
+      if (text === '.antisale on') {
         if (!(await requireGroupAdmin(msg))) return;
         g.antisale = true;
         save(MEMORY_FILE, memory);
-        return msg.reply(`Anti-sale ON. ${SALE_KEYWORDS.length} sale/deal/payment keywords loaded.`);
+        return msg.reply('Anti-sale ON.');
       }
 
-      if (text === '.antisale off' || text === '.anti-sale off') {
+      if (text === '.antisale off') {
         if (!(await requireGroupAdmin(msg))) return;
         g.antisale = false;
         save(MEMORY_FILE, memory);
@@ -3092,18 +3067,7 @@ async function start(name) {
         return msg.reply(`Anti-spam set to ${limit} messages in ${seconds} seconds.`);
       }
 
-      if (
-        text === '.antibadword on' ||
-        text === '.antibadword off' ||
-        text === '.antiword on' ||
-        text === '.antiword off' ||
-        text === '.antiword badword on' ||
-        text === '.antiword badword off' ||
-        text === '.anti badword on' ||
-        text === '.anti badword off' ||
-        text === '.antibardword on' ||
-        text === '.antibardword off'
-      ) {
+      if (text === '.antibadword on' || text === '.antibadword off') {
         if (!(await requireGroupAdmin(msg))) return;
         g.antibadword = text.endsWith(' on');
         if (g.antibadword && (!Array.isArray(g.badwords) || !g.badwords.filter(Boolean).length)) {
@@ -3112,63 +3076,6 @@ async function start(name) {
         }
         save(MEMORY_FILE, memory);
         return msg.reply(`Anti-badword ${g.antibadword ? 'ON' : 'OFF'}.`);
-      }
-
-      if (text === '.antibadword status') {
-        if (!isGroup) return msg.reply('This command works in groups only.');
-        return msg.reply(
-          `Anti-badword: ${g.antibadword ? 'ON' : 'OFF'}\n` +
-          `Bad words: ${[...new Set([...(g.badwords || []), ...DEFAULT_BADWORDS])].length}\n` +
-          `Mode: deletes if possible, then warns. Admins are checked too.`
-        );
-      }
-
-      if (text === '.badworddebug') {
-        if (!isGroup) return msg.reply('This command works in groups only.');
-        const chat = await msg.getChat();
-        const participant = chat.participants.find(p => p.id._serialized === sender);
-        return msg.reply(
-          `Anti-badword: ${g.antibadword ? 'ON' : 'OFF'}\n` +
-          `Chat: ${from}\n` +
-          `Sender: ${sender}\n` +
-          `Sender admin: ${participant && participant.isAdmin ? 'YES' : 'NO'}\n` +
-          `Bot: ${botId || 'unknown'}\n` +
-          `Words loaded: ${[...new Set([...(g.badwords || []), ...DEFAULT_BADWORDS])].length}\n` +
-          `Matako test: ${badwordDetected(g, 'Matako') || 'none'}\n` +
-          `Shit test: ${badwordDetected(g, 'Shit') || 'none'}`
-        );
-      }
-
-      if (text.startsWith('.antibadword test ')) {
-        if (!isGroup) return msg.reply('This command works in groups only.');
-        const sample = raw.slice(18).trim();
-        const word = badwordDetected(g, sample);
-        return msg.reply(word ? `Detected bad word: ${word}` : 'No bad word detected in that text.');
-      }
-
-      if (text.startsWith('.antiword ')) {
-        if (!(await requireGroupAdmin(msg))) return;
-        const word = raw.slice(10).trim().toLowerCase();
-        if (!word) return msg.reply('Use: .antiword badword');
-        if (!g.badwords.includes(word)) g.badwords.push(word);
-        save(MEMORY_FILE, memory);
-        return msg.reply(`Bad word added: ${word}`);
-      }
-
-      if (text.startsWith('.delword ')) {
-        if (!(await requireGroupAdmin(msg))) return;
-        const word = raw.slice(9).trim().toLowerCase();
-        g.badwords = g.badwords.filter(item => item !== word);
-        save(MEMORY_FILE, memory);
-        return msg.reply(`Bad word removed: ${word}`);
-      }
-
-      if (text === '.badwords') {
-        if (!isGroup) return msg.reply('Group only command.');
-        g.badwords = [...new Set((g.badwords || []).map(word => String(word || '').trim().toLowerCase()).filter(Boolean))];
-        if (!g.badwords.length) g.badwords = [...DEFAULT_BADWORDS];
-        save(MEMORY_FILE, memory);
-        return msg.reply(g.badwords.join('\n'));
       }
 
       const protectionSwitches = {
