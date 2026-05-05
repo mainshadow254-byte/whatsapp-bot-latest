@@ -417,6 +417,30 @@ function activeSenderId(msg) {
   return msg.fromMe && msg.__botId ? msg.__botId : senderId(msg);
 }
 
+function knownBotIds() {
+  const ids = new Set([ownerlock.primaryOwner].filter(Boolean));
+  for (const item of Object.values(memory.sessions || {})) {
+    if (item && item.botId) ids.add(item.botId);
+  }
+  return ids;
+}
+
+function isKnownBotId(id) {
+  return Boolean(id && knownBotIds().has(id));
+}
+
+async function primaryBotIsInGroup(msg, currentBotId) {
+  const chat = await msg.getChat().catch(() => null);
+  return primaryBotIsInChat(chat, currentBotId);
+}
+
+function primaryBotIsInChat(chat, currentBotId) {
+  const primaryId = ownerlock.primaryOwner || (memory.sessions.main && memory.sessions.main.botId);
+  if (!primaryId || primaryId === currentBotId) return false;
+  if (!chat || !chat.isGroup || !Array.isArray(chat.participants)) return false;
+  return chat.participants.some(participant => participant.id && participant.id._serialized === primaryId);
+}
+
 function fallbackYoutubeReply(kind, video, reason = '') {
   const label = kind === 'video' ? 'Video' : 'Song';
   return `${label} download failed${reason ? `: ${reason}` : ''}\n\n` +
@@ -2236,6 +2260,17 @@ async function start(name) {
       const isSessionOwnerCommand = Boolean(msg.fromMe || (botId && sender === botId));
       const lease = sessionLeaseStats(name);
 
+      if (isGroup && isKnownBotId(sender) && sender !== botId) {
+        logLine(`[${name}] ignored group message from another bot session: ${sender}`);
+        return;
+      }
+
+      const primaryControlsGroup = isGroup && name !== 'main' && await primaryBotIsInGroup(msg, botId);
+      if (primaryControlsGroup && (isCommand || !msg.fromMe)) {
+        logLine(`[${name}] primary bot controls ${from}; ignored ${isCommand ? 'command' : 'group message'} from ${sender}`);
+        return;
+      }
+
       if (name !== 'main' && lease && lease.blocked && isCommand && !text.startsWith('.session ')) {
         const contact = await contactFor(client, sender);
         return msg.reply(subscriptionExpiredText(sender, lease.paused ? 'Paused' : 'Expired'), undefined, {
@@ -4028,11 +4063,13 @@ async function start(name) {
 
       const g = group(oldMsg.from);
       if (!g.antidelete) return;
+      const chat = await oldMsg.getChat().catch(() => null);
+      if (name !== 'main' && primaryBotIsInChat(chat, client.info && client.info.wid && client.info.wid._serialized)) return;
 
       const cached = oldMsg.id && oldMsg.id._serialized ? messageCache[oldMsg.id._serialized] : null;
       const target = cached ? cached.sender : senderId(oldMsg);
       const botId = client.info && client.info.wid && client.info.wid._serialized;
-      if (target === botId || oldMsg.fromMe) return;
+      if (target === botId || oldMsg.fromMe || isKnownBotId(target)) return;
       const body = cached ? cached.body : oldMsg.body;
       const contact = await contactFor(client, target);
       const targetName = await displayNameFor(client, target);
@@ -4050,7 +4087,10 @@ async function start(name) {
   client.on('group_join', async n => {
     try {
       const chat = await n.getChat();
+      const botId = client.info && client.info.wid && client.info.wid._serialized;
+      if (name !== 'main' && primaryBotIsInChat(chat, botId)) return;
       const id = n.recipientIds[0];
+      if (isKnownBotId(id)) return;
       const settings = group(chat.id._serialized);
       const contact = await contactFor(client, id);
       const username = contact
@@ -4082,7 +4122,10 @@ async function start(name) {
   client.on('group_leave', async n => {
     try {
       const chat = await n.getChat();
+      const botId = client.info && client.info.wid && client.info.wid._serialized;
+      if (name !== 'main' && primaryBotIsInChat(chat, botId)) return;
       const id = n.recipientIds[0];
+      if (isKnownBotId(id)) return;
       const settings = group(chat.id._serialized);
       if (!settings.goodbyeOn) return;
       const contact = await contactFor(client, id);
