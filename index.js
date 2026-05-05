@@ -50,8 +50,7 @@ let memory = load(MEMORY_FILE, {
   sessions: {},
   warns: {},
   savedContacts: {},
-  inviteOptIns: {},
-  hostingClients: {}
+  inviteOptIns: {}
 });
 
 let sessions = load(SESSION_FILE, { sessions: ['main'] });
@@ -68,7 +67,6 @@ function normalizeRuntimeState() {
   if (!memory.warns) memory.warns = {};
   if (!memory.savedContacts || Array.isArray(memory.savedContacts)) memory.savedContacts = {};
   if (!memory.inviteOptIns || Array.isArray(memory.inviteOptIns)) memory.inviteOptIns = {};
-  if (!memory.hostingClients || Array.isArray(memory.hostingClients)) memory.hostingClients = {};
   if (!Array.isArray(sessions.sessions)) sessions.sessions = ['main'];
   if (!sessions.sessions.length) sessions.sessions = ['main'];
   if (!Array.isArray(ownerlock.owners)) ownerlock.owners = [];
@@ -334,56 +332,6 @@ function ownerIdFromInput(msg, rawValue) {
   return normalizeNumber(rawValue);
 }
 
-function hostingClientStats(id) {
-  const record = memory.hostingClients && memory.hostingClients[id];
-  if (!record) return null;
-
-  const now = Date.now();
-  const startedAt = Number(record.startedAt || record.createdAt || now);
-  const expiresAt = Number(record.expiresAt || now);
-  const totalDays = Math.max(0, Number(record.totalDays || Math.ceil((expiresAt - startedAt) / DAY_MS)));
-  const connectedDays = Math.max(0, Math.floor((now - startedAt) / DAY_MS));
-  const remainingDays = Math.max(0, Math.ceil((expiresAt - now) / DAY_MS));
-
-  return {
-    ...record,
-    startedAt,
-    expiresAt,
-    totalDays,
-    connectedDays,
-    remainingDays,
-    expired: expiresAt <= now
-  };
-}
-
-function hostingStatusText(id, displayName, note = '') {
-  const stats = hostingClientStats(id);
-  if (!stats) return null;
-
-  return [
-    `*Githinji Hosting Reminder*`,
-    '',
-    `Client: ${displayName}`,
-    `Connected: ${stats.connectedDays} day${stats.connectedDays === 1 ? '' : 's'}`,
-    `Remaining: ${stats.remainingDays} day${stats.remainingDays === 1 ? '' : 's'}`,
-    `Plan: ${stats.totalDays} day${stats.totalDays === 1 ? '' : 's'}`,
-    `Status: ${stats.expired ? 'Expired' : 'Active'}`,
-    note ? `Reminder: ${note}` : '',
-    HOSTING_PROMO
-  ].filter(Boolean).join('\n');
-}
-
-function parseHostingAdd(msg, rawValue) {
-  const mentioned = firstMention(msg);
-  const parts = String(rawValue || '').trim().split(/\s+/).filter(Boolean);
-  const target = mentioned || normalizeNumber(parts[0]);
-  const daysToken = mentioned ? parts.find(part => /^\d+$/.test(part)) : parts[1];
-  const days = Number(daysToken);
-
-  if (!target || !Number.isInteger(days) || days < 1) return null;
-  return { target, days };
-}
-
 function sessionLeaseStats(name) {
   const session = memory.sessions && memory.sessions[name];
   if (!session) return null;
@@ -422,17 +370,6 @@ function parseSessionLeaseInput(rawValue) {
     name,
     days: Number.isInteger(days) && days > 0 ? days : null
   };
-}
-
-async function hostingTargetFromInput(msg, rawValue) {
-  const mentioned = firstMention(msg);
-  if (mentioned) return mentioned;
-  if (msg.hasQuotedMsg) {
-    const quoted = await msg.getQuotedMessage();
-    return senderId(quoted);
-  }
-  const first = String(rawValue || '').trim().split(/\s+/)[0];
-  return normalizeNumber(first);
 }
 
 function safeFileName(name) {
@@ -547,43 +484,6 @@ function simpleSummary(text) {
   if (!clean) return 'Send text after .summarize';
   const sentences = clean.match(/[^.!?]+[.!?]*/g) || [clean];
   return sentences.slice(0, 3).join(' ').slice(0, 700);
-}
-
-async function translateText(text) {
-  const fromTo = text.match(/\s+from\s+([a-zA-Z]+)\s+to\s+([a-zA-Z]+)$/i);
-  const toOnly = text.match(/\s+to\s+([a-zA-Z]+)$/i);
-  const body = fromTo ? text.slice(0, fromTo.index).trim() : toOnly ? text.slice(0, toOnly.index).trim() : text.trim();
-  const source = fromTo ? fromTo[1].toLowerCase() : 'english';
-  const target = fromTo ? fromTo[2].toLowerCase() : toOnly ? toOnly[1].toLowerCase() : 'swahili';
-  const langMap = {
-    swahili: 'sw',
-    kiswahili: 'sw',
-    english: 'en',
-    french: 'fr',
-    spanish: 'es',
-    arabic: 'ar',
-    german: 'de',
-    portuguese: 'pt',
-    italian: 'it'
-  };
-  const sourceCode = langMap[source] || source.slice(0, 2);
-  const targetCode = langMap[target] || target.slice(0, 2);
-
-  if (!body) return 'Send text after .translate';
-
-  try {
-    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(body)}&langpair=${encodeURIComponent(sourceCode)}|${encodeURIComponent(targetCode)}`;
-    const response = await fetch(url);
-    const data = await response.json();
-    if (data.responseStatus && data.responseStatus >= 400) {
-      return data.responseDetails || 'Translation failed.';
-    }
-    return data.responseData && data.responseData.translatedText
-      ? data.responseData.translatedText
-      : 'Translation failed.';
-  } catch {
-    return 'Translation failed. Check internet on the server.';
-  }
 }
 
 async function defineWord(word) {
@@ -1891,7 +1791,6 @@ async function start(name) {
 .smart on/off
 .typing on/off
 .online on/off
-.translate text to Swahili
 .summarize text
 .define word
 
@@ -1990,13 +1889,24 @@ async function start(name) {
 .promote @user
 .demote @user
 .kick @user
+.add 2547...
 .mute @user 10m
 .purge @user 30
 .tagall
 .hidetag message
 .tagadmins
+.owner
+.botadmin
 .group open
 .group close
+.group info
+.group link
+.revoke link
+.setname text
+.setdesc text
+.setpp
+.delete
+.deleteall @user
 
 *Status*
 .viewstatus on/off
@@ -2004,14 +1914,6 @@ async function start(name) {
 .reactstatus emoji
 .setstatus text
 .autostatus on/off
-
-*Hosting Clients*
-.hosting add @user 30
-.hosting extend @user 7
-.hosting remind @user message
-.hosting status @user
-.hosting list
-.hosting remove @user
 
 *Owner*
 .ping
@@ -2086,110 +1988,6 @@ async function start(name) {
       if (text === '.owner list') {
         if (!(await requireOwnerAccess(msg))) return;
         return msg.reply(ownerlock.owners.length ? ownerlock.owners.map(tag).join('\n') : 'No trusted owners saved.');
-      }
-
-      if (text.startsWith('.hosting add ')) {
-        if (!(await requireOwnerAccess(msg))) return;
-        const parsed = parseHostingAdd(msg, raw.slice(13));
-        if (!parsed) return msg.reply('Use: .hosting add @user 30 or .hosting add 2547... 30');
-
-        const now = Date.now();
-        const display = await displayNameFor(client, parsed.target);
-        memory.hostingClients[parsed.target] = {
-          id: parsed.target,
-          addedBy: sender,
-          session: name,
-          totalDays: parsed.days,
-          startedAt: now,
-          expiresAt: now + parsed.days * DAY_MS,
-          createdAt: now,
-          lastReminderAt: null
-        };
-        save(MEMORY_FILE, memory);
-
-        const message = hostingStatusText(parsed.target, display, 'Your bot hosting period has started.');
-        await client.sendMessage(parsed.target, message).catch(e => logLine(`Hosting welcome failed (${name}): ${e.message}`));
-        return msg.reply(`Hosting client added: *${display}*\nDays: ${parsed.days}\nRemaining: ${parsed.days}`);
-      }
-
-      if (text.startsWith('.hosting extend ') || text.startsWith('.hosting renew ')) {
-        if (!(await requireOwnerAccess(msg))) return;
-        const rawValue = raw.replace(/^\.hosting\s+(extend|renew)\s+/i, '');
-        const parsed = parseHostingAdd(msg, rawValue);
-        if (!parsed || !memory.hostingClients[parsed.target]) {
-          return msg.reply('Use: .hosting extend @user 7 or .hosting renew 2547... 30');
-        }
-
-        const now = Date.now();
-        const record = memory.hostingClients[parsed.target];
-        const baseExpiry = Math.max(Number(record.expiresAt || now), now);
-        record.expiresAt = baseExpiry + parsed.days * DAY_MS;
-        record.totalDays = Number(record.totalDays || 0) + parsed.days;
-        record.updatedAt = now;
-        save(MEMORY_FILE, memory);
-
-        const display = await displayNameFor(client, parsed.target);
-        const message = hostingStatusText(parsed.target, display, `Your hosting has been extended by ${parsed.days} day${parsed.days === 1 ? '' : 's'}.`);
-        await client.sendMessage(parsed.target, message).catch(e => logLine(`Hosting extension notice failed (${name}): ${e.message}`));
-        const stats = hostingClientStats(parsed.target);
-        return msg.reply(`Hosting extended: *${display}*\nAdded: ${parsed.days} day${parsed.days === 1 ? '' : 's'}\nRemaining: ${stats.remainingDays} day${stats.remainingDays === 1 ? '' : 's'}`);
-      }
-
-      if (text.startsWith('.hosting remind ')) {
-        if (!(await requireOwnerAccess(msg))) return;
-        const mentioned = firstMention(msg);
-        const rawBody = raw.slice(16).trim();
-        const clientId = await hostingTargetFromInput(msg, rawBody);
-        if (!clientId || !memory.hostingClients[clientId]) {
-          return msg.reply('Use: .hosting remind @user your reminder message');
-        }
-
-        const hasReplyTarget = !mentioned && msg.hasQuotedMsg;
-        const reminderText = mentioned
-          ? rawBody.replace(/@\d+/g, '').trim()
-          : hasReplyTarget
-            ? rawBody
-            : rawBody.split(/\s+/).slice(1).join(' ').trim();
-        const display = await displayNameFor(client, clientId);
-        const message = hostingStatusText(clientId, display, reminderText || 'Please renew before your hosting days end.');
-        await client.sendMessage(clientId, message).catch(e => {
-          throw new Error(`Could not send reminder: ${e.message}`);
-        });
-        memory.hostingClients[clientId].lastReminderAt = Date.now();
-        memory.hostingClients[clientId].lastReminder = reminderText || 'Please renew before your hosting days end.';
-        save(MEMORY_FILE, memory);
-        return msg.reply(`Reminder sent to *${display}*.`);
-      }
-
-      if (text.startsWith('.hosting status')) {
-        if (!(await requireOwnerAccess(msg))) return;
-        const target = await hostingTargetFromInput(msg, raw.slice(15));
-        if (!target || !memory.hostingClients[target]) return msg.reply('Use: .hosting status @user or .hosting status 2547...');
-        const display = await displayNameFor(client, target);
-        return msg.reply(hostingStatusText(target, display));
-      }
-
-      if (text === '.hosting list') {
-        if (!(await requireOwnerAccess(msg))) return;
-        const ids = Object.keys(memory.hostingClients || {});
-        if (!ids.length) return msg.reply('No hosting clients saved.');
-
-        const rows = [];
-        for (const id of ids) {
-          const stats = hostingClientStats(id);
-          rows.push(`${tag(id)} - ${stats.remainingDays} day${stats.remainingDays === 1 ? '' : 's'} left (${stats.expired ? 'expired' : 'active'})`);
-        }
-        return msg.reply(`*Hosting Clients*\n\n${rows.join('\n')}`);
-      }
-
-      if (text.startsWith('.hosting remove ')) {
-        if (!(await requireOwnerAccess(msg))) return;
-        const target = await hostingTargetFromInput(msg, raw.slice(16));
-        if (!target || !memory.hostingClients[target]) return msg.reply('Use: .hosting remove @user or .hosting remove 2547...');
-        const display = await displayNameFor(client, target);
-        delete memory.hostingClients[target];
-        save(MEMORY_FILE, memory);
-        return msg.reply(`Hosting client removed: *${display}*`);
       }
 
       if (text === '.restart') {
@@ -2524,10 +2322,6 @@ async function start(name) {
 
       if (text.startsWith('.readmore ')) {
         return msg.reply(readMore(raw.slice(10).trim()));
-      }
-
-      if (text.startsWith('.translate ')) {
-        return msg.reply(await translateText(raw.slice(11).trim()));
       }
 
       if (text.startsWith('.define ')) {
