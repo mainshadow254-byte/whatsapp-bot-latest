@@ -2310,6 +2310,7 @@ async function start(name) {
 .antimention limit 5
 .antispam on/off
 .antibadword on/off
+.antiword badword on/off
 .antibadword status
 .antibadword test text
 .badworddebug
@@ -3091,7 +3092,18 @@ async function start(name) {
         return msg.reply(`Anti-spam set to ${limit} messages in ${seconds} seconds.`);
       }
 
-      if (text === '.antibadword on' || text === '.antibadword off') {
+      if (
+        text === '.antibadword on' ||
+        text === '.antibadword off' ||
+        text === '.antiword on' ||
+        text === '.antiword off' ||
+        text === '.antiword badword on' ||
+        text === '.antiword badword off' ||
+        text === '.anti badword on' ||
+        text === '.anti badword off' ||
+        text === '.antibardword on' ||
+        text === '.antibardword off'
+      ) {
         if (!(await requireGroupAdmin(msg))) return;
         g.antibadword = text.endsWith(' on');
         if (g.antibadword && (!Array.isArray(g.badwords) || !g.badwords.filter(Boolean).length)) {
