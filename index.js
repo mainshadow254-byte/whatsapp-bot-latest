@@ -631,17 +631,65 @@ function sessionLeaseLine(name) {
   return `${name}: ${stats.remainingDays} day${stats.remainingDays === 1 ? '' : 's'} left, connected ${stats.connectedDays} day${stats.connectedDays === 1 ? '' : 's'} (${stats.expired ? 'expired' : 'active'})`;
 }
 
+function sessionPlanLabel(name) {
+  const stats = sessionLeaseStats(name);
+  if (!stats) return 'unknown plan';
+  if (stats.unlimited) return 'unlimited premium';
+  return `${stats.totalDays} day${stats.totalDays === 1 ? '' : 's'} premium`;
+}
+
+function sessionWelcomeText(displayName, name) {
+  return `Hurray ${displayName}, you are premium now!
+
+Subscription: ${sessionPlanLabel(name)}
+
+Enjoy Githinji Bot. Use .menu to see commands.`;
+}
+
+function parsePlanDays(rawPlan) {
+  const plan = String(rawPlan || '').trim().toLowerCase();
+  if (!plan) return { days: null, unlimited: false, label: '' };
+  if (['unlimited', 'forever', 'lifetime', 'permanent'].includes(plan)) {
+    return { days: null, unlimited: true, label: 'unlimited' };
+  }
+
+  const match = plan.match(/^(\d+)\s*(d|day|days|w|week|weeks|m|month|months|y|year|years)?$/);
+  if (!match) return { days: null, unlimited: false, label: plan };
+
+  const amount = Number(match[1]);
+  const unit = match[2] || 'd';
+  const multipliers = {
+    d: 1,
+    day: 1,
+    days: 1,
+    w: 7,
+    week: 7,
+    weeks: 7,
+    m: 30,
+    month: 30,
+    months: 30,
+    y: 365,
+    year: 365,
+    years: 365
+  };
+
+  return {
+    days: amount * (multipliers[unit] || 1),
+    unlimited: false,
+    label: plan
+  };
+}
+
 function parseSessionLeaseInput(rawValue) {
   const parts = String(rawValue || '').trim().split(/\s+/).filter(Boolean);
   const name = sessionName(parts[0]);
-  const plan = String(parts[1] || '').toLowerCase();
-  const unlimited = !plan || ['unlimited', 'forever', 'lifetime', 'permanent'].includes(plan);
-  const days = Number(parts[1]);
+  const plan = parsePlanDays(parts[1]);
   if (!name) return null;
   return {
     name,
-    days: Number.isInteger(days) && days > 0 ? days : null,
-    unlimited
+    days: Number.isInteger(plan.days) && plan.days > 0 ? plan.days : null,
+    unlimited: plan.unlimited,
+    planLabel: plan.label
   };
 }
 
@@ -2066,6 +2114,7 @@ async function start(name) {
   client.on('ready', () => {
     const botId = client.info && client.info.wid && client.info.wid._serialized;
     const session = sessionSettings(name);
+    const previousBotId = session.botId;
     if (botId && session.botId !== botId) {
       session.botId = botId;
       save(MEMORY_FILE, memory);
@@ -2077,6 +2126,12 @@ async function start(name) {
       logLine(`[${name}] primary owner set to ${botId}`);
     }
     logLine(`[${name}] READY`);
+    if (name !== 'main' && botId && previousBotId !== botId && !session.welcomeSentAt) {
+      session.welcomeSentAt = Date.now();
+      save(MEMORY_FILE, memory);
+      const welcomeName = (client.info && client.info.pushname) || name;
+      client.sendMessage(botId, sessionWelcomeText(welcomeName, name)).catch(e => logLine(`Session welcome failed (${name}): ${e.message}`));
+    }
     startScheduleLoop(client, name);
     sendDueSchedules(client, name).catch(e => logLine(`Schedule startup check failed (${name}): ${e.message}`));
   });
@@ -2378,10 +2433,11 @@ async function start(name) {
 .schedule run
 .schedule cancel id
 .session list
-.session add name days/unlimited
-.add session name unlimited
+.session add name 7d/10w/30d/unlimited
+.add session name 7d/unlimited
 .session status name
-.session extend name days
+.session extend name 7d/10w/30d
+.session renew name unlimited
 .session remove name
 .session qr
 .session pair name 2547...${hostingPromoText()}`);
@@ -3601,6 +3657,7 @@ async function start(name) {
         const parsed = parseSessionLeaseInput(raw.slice(13));
         const nameToAdd = parsed && parsed.name;
         if (!nameToAdd) return msg.reply('Write a session name.');
+        if (!parsed.days && !parsed.unlimited) return msg.reply('Use: .session add name 7d, .session add name 10w, .session add name 30d, or .session add name unlimited');
         if (sessions.sessions.includes(nameToAdd)) return msg.reply('Session already exists.');
 
         sessions.sessions.push(nameToAdd);
@@ -3620,8 +3677,9 @@ async function start(name) {
         save(SESSION_FILE, sessions);
         save(MEMORY_FILE, memory);
         start(nameToAdd);
+        const planText = parsed.unlimited ? 'unlimited' : `${parsed.planLabel} (${parsed.days} day${parsed.days === 1 ? '' : 's'})`;
         return msg.reply(
-          `Session ${nameToAdd} added${parsed.days ? ` for ${parsed.days} day${parsed.days === 1 ? '' : 's'}` : ' as unlimited'}.\n` +
+          `Session ${nameToAdd} added for ${planText}.\n` +
           `Use .session pair ${nameToAdd} 2547... for a far user, or .session qr ${nameToAdd} for QR.`
         );
       }
@@ -3631,7 +3689,7 @@ async function start(name) {
         if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
         const rawValue = raw.replace(/^\.session\s+(extend|renew)\s+/i, '');
         const parsed = parseSessionLeaseInput(rawValue);
-        if (!parsed || (!parsed.days && !parsed.unlimited)) return msg.reply('Use: .session extend name 7 or .session renew name unlimited');
+        if (!parsed || (!parsed.days && !parsed.unlimited)) return msg.reply('Use: .session extend name 7d or .session renew name unlimited');
         if (!sessions.sessions.includes(parsed.name)) return msg.reply('Session not found.');
 
         const targetSession = sessionSettings(parsed.name);
@@ -3689,7 +3747,7 @@ async function start(name) {
         const requested = sessionName(parts[0]);
         const phone = String(parts[1] || '').replace(/\D/g, '');
         if (!requested || !phone) return msg.reply('Use: .session pair sessionName 2547...');
-        if (!sessions.sessions.includes(requested)) return msg.reply('Session not found. Create it first with .session add name days');
+        if (!sessions.sessions.includes(requested)) return msg.reply('Session not found. Create it first with .session add name 7d, 30d, or unlimited');
         try {
           const code = await requestSessionPairingCode(requested, phone);
           return msg.reply(
