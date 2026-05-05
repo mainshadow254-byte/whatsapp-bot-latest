@@ -2159,10 +2159,14 @@ async function start(name) {
 
       if (isGroup && !text.startsWith('.') && await handleAntispam(client, msg, g)) return;
 
-      if (isGroup && g.antimention && !text.startsWith('.') && mentionedIds.length >= g.antimentionLimit) {
-        if (!(await isGroupAdmin(msg))) {
-          await deleteAsBot(msg);
-          await warnUser(client, msg, sender, `Do not mention many people. Limit is ${g.antimentionLimit}.`);
+      if (isGroup && g.antimention && !text.startsWith('.') && mentionedIds.length) {
+        const taggedBot = Boolean(botId && mentionedIds.includes(botId));
+        const massTagged = mentionedIds.length >= g.antimentionLimit;
+        if ((taggedBot || massTagged) && !(await isGroupAdmin(msg))) {
+          const reason = taggedBot
+            ? 'Do not tag the bot without admin approval.'
+            : `Do not mention many people. Limit is ${g.antimentionLimit}.`;
+          await warnUser(client, msg, sender, reason);
           return;
         }
       }
