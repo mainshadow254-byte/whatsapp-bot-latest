@@ -92,7 +92,7 @@ const scheduleIntervals = {};
 const processedMessages = new Set();
 const botDeletedMessageIds = new Set();
 
-const BADWORDS_VERSION = 2;
+const BADWORDS_VERSION = 3;
 const DEFAULT_BADWORDS = [
   'fuck',
   'fucking',
@@ -158,67 +158,184 @@ const DEFAULT_BADWORDS = [
   'mavi ya kuku',
   'scam',
   'conman',
-  'fraud'
+  'fraud',
+  'thief',
+  'mwizi',
+  'wezi',
+  'tapeli',
+  'matapeli',
+  'upumbavu',
+  'ujinga',
+  'mavi wewe',
+  'kuma wewe',
+  'umbwa wewe',
+  'fala wewe',
+  'mjinga wewe',
+  'pumbavu wewe',
+  'malaya wewe',
+  'kahaba wewe',
+  'fuck you',
+  'shut up',
+  'go to hell',
+  'son of a bitch',
+  'piece of shit'
 ];
 
 const SALE_KEYWORDS = [
-  'uza',
-  'kuuza',
-  'nauza',
-  'inauzwa',
-  'kuuzwa',
   'sell',
   'selling',
   'sold',
+  'sale',
+  'sales',
   'for sale',
-  'nunua',
-  'kununua',
-  'nanunua',
-  'buy',
+  'on sale',
+  'available',
+  'available now',
+  'stock',
+  'in stock',
+  'out of stock',
+  'restock',
+  'new stock',
+  'selling cheap',
+  'cheap',
+  'cheap price',
+  'offer',
+  'offers',
+  'deal',
+  'deals',
+  'discount',
+  'promo',
+  'promotion',
+  'price',
+  'pricing',
+  'cost',
+  'how much',
+  'how much is it',
+  'dm for price',
+  'inbox for price',
+  'negotiable',
+  'fixed price',
+  'last price',
+  'wholesale',
+  'retail',
+  'supplier',
+  'vendor',
+  'buyer',
   'buying',
+  'buy',
   'purchase',
   'order',
-  'bei',
-  'price',
-  'cost',
-  'offer',
-  'ofa',
-  'deal',
-  'trade',
-  'swap',
-  'exchange',
-  'biashara',
-  'soko',
-  'duka',
-  'stock',
-  'mzigo',
-  'bidhaa',
-  'product',
-  'goods',
-  'service',
-  'services',
-  'available',
-  'ipo',
-  'zipo',
-  'lipa',
-  'kulipa',
-  'malipo',
-  'payment',
-  'pay',
-  'paid',
-  'mpesa',
-  'm-pesa',
-  'till',
-  'paybill',
-  'deposit',
+  'ordering',
+  'book',
+  'booking',
+  'reserve',
   'delivery',
   'deliver',
   'shipping',
   'ship',
-  'client',
-  'customer',
+  'pickup',
+  'pay',
+  'payment',
+  'paid',
+  'deposit',
+  'balance',
+  'mpesa',
+  'm-pesa',
+  'till',
+  'paybill',
+  'send money',
+  'trade',
+  'trading',
+  'swap',
+  'exchange',
+  'account for sale',
+  'acc for sale',
+  'login',
+  'credentials',
+  'nauza',
+  'kuuza',
+  'uza',
+  'uzaa',
+  'anauza',
+  'tunauza',
+  'mnauza',
+  'unauza',
+  'ninauza',
+  'inauzwa',
+  'zinauzwa',
+  'linauzwa',
+  'yanauzwa',
+  'imeuzwa',
+  'zimeuzwa',
+  'bei',
+  'bei gani',
+  'bei yake',
+  'bei ni',
+  'ngapi',
+  'ni ngapi',
+  'pesa ngapi',
+  'unatoa ngapi',
+  'toa offer',
+  'ofa',
+  'ofa poa',
+  'dili',
+  'dili poa',
+  'biashara',
+  'fanya biashara',
   'mteja',
-  'wateja'
+  'wateja',
+  'customer',
+  'mzigo',
+  'mzigo iko',
+  'mzigo mpya',
+  'stoki',
+  'iko stock',
+  'iko available',
+  'iko',
+  'ziko',
+  'niko nazo',
+  'nazo',
+  'kuna',
+  'niko na',
+  'niko nayo',
+  'nataka kuuza',
+  'nataka buyer',
+  'mnunuzi',
+  'nunua',
+  'kununua',
+  'nanunua',
+  'nataka kununua',
+  'chukua',
+  'chukueni',
+  'chukua hii',
+  'bookia',
+  'weka order',
+  'oda',
+  'agiza',
+  'kuagiza',
+  'dilivari',
+  'leta',
+  'tuma',
+  'kutuma',
+  'send',
+  'malipo',
+  'lipa',
+  'kulipa',
+  'lipia',
+  'nimelipa',
+  'weka deposit',
+  'tuma pesa',
+  'nitumie pesa',
+  'lipa na mpesa',
+  'escrow',
+  'admin escrow',
+  'kubadilisha',
+  'badilishana',
+  'ku trade',
+  'kubuy',
+  'kusell',
+  'kuswap',
+  'kuuzia'
 ];
 
 function logLine(text) {
@@ -505,19 +622,22 @@ function saleKeywordDetected(text) {
   }) || null;
 }
 
-function antisaleDetailWarning(displayName, keyword) {
-  return `*Anti-Sale Warning*
+function antisaleDetailWarning(displayName, keyword, targetId) {
+  return `🚫 *STRICT WARNING — DEALING WITHOUT ADMIN APPROVAL IS NOT ALLOWED*
 
-User: *${displayName}*
-Flagged word: ${keyword || 'sale/trade keyword'}
+${tag(targetId)} (${displayName})
 
-This message looks like buying, selling, swapping, payment, delivery, or trading inside the group.
+Your message looks like buying, selling, swapping, payment, delivery, account trading, or any form of deal inside this group.
 
-For safety, involve a group admin before any deal. Admin escrow helps confirm the buyer, seller, item, payment, and delivery before anything is released.
+No mercy on scams here.
 
-Do not send money, goods, account details, login information, or private information directly without admin approval.
+Before any deal continues, you MUST involve a group admin as escrow or witness. Do not send money, goods, login details, account access, codes, screenshots, or private information without admin approval.
 
-Allowed only when admins approve it. Direct deals are done at your own risk.`;
+Anyone trying to trade secretly, rush payments, avoid admins, or move deals to inbox will be treated as suspicious and may be removed from the group without warning.
+
+✅ Deals are allowed ONLY when admins approve.
+❌ No admin approval = No deal.
+⚠️ Ignore this warning at your own risk.`;
 }
 
 function badwordDetected(g, text) {
@@ -1859,10 +1979,9 @@ async function start(name) {
         if (await isGroupAdmin(msg)) return;
         const contact = await contactFor(client, sender);
         const senderName = await displayNameFor(client, sender);
-        await msg.reply(antisaleDetailWarning(senderName, saleKeyword), undefined, {
+        await msg.reply(antisaleDetailWarning(senderName, saleKeyword, sender), undefined, {
           mentions: contact ? [contact] : []
         });
-        await warnUser(client, msg, sender, `Anti-sale: "${saleKeyword}" looks like buying, selling, payment, delivery, or trading. Use admin escrow before any deal.`);
         return;
       }
 
