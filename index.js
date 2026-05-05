@@ -188,7 +188,7 @@ async function requireOwnerAccess(msg) {
 
 async function requirePrimaryOwnerAccess(msg, botId) {
   if (!ownerlock.primaryOwner) return true;
-  if (botId === ownerlock.primaryOwner && msg.fromMe) return true;
+  if (botId === ownerlock.primaryOwner && (msg.fromMe || isTrustedOwner(activeSenderId(msg)))) return true;
   await msg.reply('Only the first deployed bot number can use this command.');
   return false;
 }
