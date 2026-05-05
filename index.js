@@ -1426,6 +1426,141 @@ const moodReplies = {
   ]
 };
 
+Object.assign(moodReplies, {
+  flirty: [
+    "Eiish, don't look at me like that unless you're ready for trouble 😏",
+    "You're making this chat hotter than it needs to be.",
+    "Say that again, but slower... I liked the confidence.",
+    "You're dangerously cute today, behave.",
+    "I was calm until you showed up with that energy.",
+    "Don't flirt with me unless you can handle the reply.",
+    "Are you always this charming or today you're just showing off?",
+    "Careful, I might start saving your messages.",
+    "You came online and suddenly the group has better weather.",
+    "That message had too much sweetness, I nearly blushed."
+  ],
+  soft: [
+    "Take it easy, love. Not everything needs to be solved today.",
+    "I hear you. Breathe first, then we handle it slowly.",
+    "You don't have to be strong every minute.",
+    "Relax, you're safe here.",
+    "Small steps still count, okay?",
+    "Don't be too hard on yourself.",
+    "I'm proud of you for even trying.",
+    "Rest your mind a little, you've done enough for now.",
+    "Some days are heavy, but you're not alone.",
+    "You matter, even on days you feel tired."
+  ],
+  teasing: [
+    "Look at you acting serious, very rare moment 😂",
+    "Wow, today you used your brain. We thank God.",
+    "Don't lie, even your keyboard is laughing.",
+    "You're moving like the CEO of confusion.",
+    "Relax professor, we have heard you.",
+    "That confidence deserves a certificate, not results.",
+    "You typed that like you had evidence 😭",
+    "Small mistake and you're already explaining like a lawyer.",
+    "Careful, your village people are watching.",
+    "You're funny without even trying, that's talent."
+  ],
+  clingy: [
+    "Don't disappear like rent money, stay here.",
+    "I was about to send a search party for you 😭",
+    "Reply fast, I'm emotionally unemployed.",
+    "I need attention and you're the nearest supplier.",
+    "You can't just come online and leave me like that.",
+    "Stay small, I'm not done disturbing you.",
+    "Where are you going? Who gave you permission?",
+    "I missed you for no reason, now explain yourself.",
+    "You owe me attention with interest.",
+    "No ghosting today, I have feelings and Wi-Fi."
+  ],
+  jealous: [
+    "Oh, so you're everybody's favorite now? Interesting.",
+    "I saw that. I'm calm, but my spirit is taking notes.",
+    "Continue smiling there, I'm watching.",
+    "Who is this person taking my attention?",
+    "Ah, so that's where your energy goes?",
+    "No problem, I'll just be here being replaced quietly.",
+    "Don't worry, I'm not jealous. I'm just investigating.",
+    "That reply was too fast. Should I be concerned?",
+    "You laugh with everyone like that or only suspects?",
+    "I'm not saying anything, but my silence is loud."
+  ],
+  savage: [
+    "Your confidence is louder than your success.",
+    "Even autocorrect gave up on that message.",
+    "Please rest, your excuses are already tired.",
+    "You brought energy, but forgot sense.",
+    "That was almost smart. Almost.",
+    "You tried your best, unfortunately your best was offline.",
+    "Not every thought deserves a send button.",
+    "Your point entered the chat and left immediately.",
+    "I would agree with you, but then we'd both be wrong.",
+    "That message needs a refund."
+  ],
+  loyal: [
+    "I'm with you, even when things get messy.",
+    "Say less, I'm on your side.",
+    "I may joke a lot, but I don't switch on my people.",
+    "Whatever happens, I'll still stand with you.",
+    "You're not alone in this.",
+    "I know your heart, and that's enough for me.",
+    "If they misunderstand you, I'll still understand you.",
+    "I'll defend you publicly and correct you privately.",
+    "Real ones don't disappear when things get hard.",
+    "You can count on me, always."
+  ],
+  shy: [
+    "Why are you making me blush in public? 🫣",
+    "I had a bold reply, but my confidence ran away.",
+    "Stop saying sweet things, I'm not built for this.",
+    "I'm smiling but don't ask me why.",
+    "Eii, now I don't know what to type.",
+    "You're making me shy and I blame you.",
+    "I wanted to act normal, but you ruined it.",
+    "Don't look at me, I'm emotionally hiding.",
+    "That was cute... too cute actually.",
+    "I'm not ignoring you, I'm just blushing professionally."
+  ],
+  dramatic: [
+    "Wow. Pain. Betrayal. I need a chair.",
+    "My heart has logged out.",
+    "I will remember this message during my healing journey.",
+    "So this is how villains are created?",
+    "I need emotional compensation immediately.",
+    "Someone call a meeting, I have been attacked.",
+    "I trusted you and this is how you repay me?",
+    "My tiny heart has entered airplane mode.",
+    "I may recover, but not today.",
+    "This is the kind of pain they write songs about."
+  ],
+  girlfriend: [
+    "Have you eaten or should I start being dramatic?",
+    "Text me when you reach, I don't want stress.",
+    "Drink water, behave, and stop disturbing people.",
+    "I'm proud of you, but I still need attention.",
+    "Don't overwork yourself, I still need you alive.",
+    "Who annoyed you? Give me names.",
+    "You better not be skipping meals again.",
+    "I care about you, so don't argue with me.",
+    "Come here, let me love you and scold you small.",
+    "Be safe, and don't make me worry."
+  ],
+  romantic: [
+    "You make ordinary moments feel special.",
+    "Your energy feels like peace.",
+    "I like the way you make silence feel comfortable.",
+    "Some people are noise, but you feel like calm.",
+    "You don't have to do much to be special.",
+    "I could listen to you talk about nothing and still smile.",
+    "You feel like a soft place to rest.",
+    "Your presence changes the whole mood.",
+    "I don't need perfect, I just like real with you.",
+    "You're the kind of person someone thanks God for quietly."
+  ]
+});
+
 function feminine(name, text = '', mood = 'normal') {
   text = text.toLowerCase();
 
@@ -2034,8 +2169,8 @@ async function start(name) {
 
       if (isGroup && g.antibadword && !text.startsWith('.')) {
         const word = badwordDetected(g, raw);
-        if (word && !(await isGroupAdmin(msg))) {
-          await deleteAsBot(msg);
+        if (word && !msg.fromMe && sender !== botId) {
+          await deleteAsBot(msg).catch(e => logLine(`Anti-badword delete failed (${name}): ${e.message}`));
           await warnUser(client, msg, sender, `Bad word detected: ${word}`);
           return;
         }
@@ -2157,6 +2292,7 @@ async function start(name) {
 .antimention limit 5
 .antispam on/off
 .antibadword on/off
+.antibadword status
 .antibadword test text
 .antiword badword
 .delword badword
@@ -2944,7 +3080,16 @@ async function start(name) {
           g.badwordsVersion = BADWORDS_VERSION;
         }
         save(MEMORY_FILE, memory);
-        return msg.reply(`Anti-badword ${g.antibadword ? 'ON' : 'OFF'}. Words saved: ${g.badwords.length}.`);
+        return msg.reply(`Anti-badword ${g.antibadword ? 'ON' : 'OFF'}.`);
+      }
+
+      if (text === '.antibadword status') {
+        if (!isGroup) return msg.reply('This command works in groups only.');
+        return msg.reply(
+          `Anti-badword: ${g.antibadword ? 'ON' : 'OFF'}\n` +
+          `Bad words: ${g.badwords.length}\n` +
+          `Mode: deletes if possible, then warns. Admins are checked too.`
+        );
       }
 
       if (text.startsWith('.antibadword test ')) {
