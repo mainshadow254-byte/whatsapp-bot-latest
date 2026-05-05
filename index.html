@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Register to Earnify</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <form class="register-form" aria-label="Register to Earnify">
+        <h1>Register to Earnify</h1>
+
+        <label for="username">Userngme</label>
+        <input id="username" type="text" placeholder="Enter username" />
+
+        <label for="email">Email</label>
+        <input id="email" type="email" placeholder="Email Address" />
+
+        <label for="country">Country</label>
+        <select id="country">
+          <option selected>Select your country</option>
+        </select>
+
+        <label for="phone">Phone</label>
+        <input id="phone" type="tel" placeholder="Phone number" />
+
+        <label for="invited">Invited by</label>
+        <input id="invited" class="invited-field" type="text" value="Faimasalime" />
+
+        <label for="password">Set password</label>
+        <div class="password-wrap">
+          <input id="password" type="password" placeholder="Password" />
+          <button class="eye-button" type="button" aria-label="Show password"></button>
+        </div>
+
+        <label class="terms-row">
+          <input type="checkbox" checked />
+          <span>I accept terms, policies and conditions</span>
+        </label>
+
+        <button class="signup-button" type="submit">Signup</button>
+
+        <p class="signin-copy">
+          Already have an account?
+          <a href="#">Signin here</a>
+        </p>
+      </form>
+    </main>
+  </body>
+</html>
