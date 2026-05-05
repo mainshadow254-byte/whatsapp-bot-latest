@@ -308,6 +308,25 @@ function sessionName(raw) {
   return String(raw || '').trim().replace(/[^a-z0-9_-]/gi, '').slice(0, 32);
 }
 
+async function requestSessionPairingCode(name, phone) {
+  if (!clients[name]) start(name);
+
+  let lastError = null;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const targetClient = clients[name];
+    if (targetClient && typeof targetClient.requestPairingCode === 'function') {
+      try {
+        return await targetClient.requestPairingCode(phone);
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    await sleep(2000);
+  }
+
+  throw lastError || new Error('Pairing page was not ready.');
+}
+
 function ownerIdFromInput(msg, rawValue) {
   const mentioned = firstMention(msg);
   if (mentioned) return mentioned;
@@ -1704,6 +1723,10 @@ async function start(name) {
     qrcode.generate(qr, { small: true });
   });
 
+  client.on('code', code => {
+    logLine(`[${name}] pairing code: ${code}`);
+  });
+
   client.on('ready', () => {
     const botId = client.info && client.info.wid && client.info.wid._serialized;
     const session = sessionSettings(name);
@@ -2014,7 +2037,7 @@ async function start(name) {
 .session extend name days
 .session remove name
 .session qr
-.session pair${hostingPromoText()}`);
+.session pair name 2547...${hostingPromoText()}`);
       }
 
       if (text === '.ping') return msg.reply(`Pong. Session ${name} is alive.`);
@@ -3379,7 +3402,7 @@ async function start(name) {
         start(nameToAdd);
         return msg.reply(
           `Session ${nameToAdd} added${parsed.days ? ` for ${parsed.days} day${parsed.days === 1 ? '' : 's'}` : ''}.\n` +
-          `Scan its QR in the terminal or use .session qr ${nameToAdd}.`
+          `Use .session pair ${nameToAdd} 2547... for a far user, or .session qr ${nameToAdd} for QR.`
         );
       }
 
@@ -3432,7 +3455,26 @@ async function start(name) {
 
       if (text.startsWith('.session pair')) {
         if (!(await requireOwnerAccess(msg))) return;
-        return msg.reply('Pairing-code login is not reliable in whatsapp-web.js on every account. Use .session add name and scan the QR shown in the terminal or .session qr name.');
+        if (!(await requirePrimaryOwnerAccess(msg, botId))) return;
+        const parts = raw.slice(13).trim().split(/\s+/).filter(Boolean);
+        const requested = sessionName(parts[0]);
+        const phone = String(parts[1] || '').replace(/\D/g, '');
+        if (!requested || !phone) return msg.reply('Use: .session pair sessionName 2547...');
+        if (!sessions.sessions.includes(requested)) return msg.reply('Session not found. Create it first with .session add name days');
+        try {
+          const code = await requestSessionPairingCode(requested, phone);
+          return msg.reply(
+            `*Pairing Code for ${requested}*\n\n` +
+            `${code}\n\n` +
+            `On their phone: WhatsApp > Linked devices > Link with phone number instead.\n` +
+            `Enter this code before it expires.`
+          );
+        } catch (e) {
+          return msg.reply(
+            `Pairing code failed for ${requested}: ${e.message}\n` +
+            `Try again in a few seconds, or use .session qr ${requested}.`
+          );
+        }
       }
 
       if (text.startsWith('.session remove ')) {
