@@ -186,8 +186,9 @@ async function requireOwnerAccess(msg) {
   return false;
 }
 
-async function requirePrimaryOwnerAccess(msg, botId) {
+async function requirePrimaryOwnerAccess(msg, botId, sessionNameValue) {
   if (!ownerlock.primaryOwner) return true;
+  if (sessionNameValue === 'main' && (msg.fromMe || isTrustedOwner(activeSenderId(msg)))) return true;
   if (botId === ownerlock.primaryOwner && (msg.fromMe || isTrustedOwner(activeSenderId(msg)))) return true;
   await msg.reply('Only the first deployed bot number can use this command.');
   return false;
@@ -3070,7 +3071,7 @@ async function start(name) {
 
       if (text === '.clearsaved') {
         if (!(await requireOwnerAccess(msg))) return;
-        if (!(await requirePrimaryOwnerAccess(msg, botId))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
         memory.savedContacts = {};
         save(MEMORY_FILE, memory);
         return msg.reply('Saved contacts cleared.');
@@ -3382,7 +3383,7 @@ async function start(name) {
 
       if (text.startsWith('.session add ')) {
         if (!(await requireOwnerAccess(msg))) return;
-        if (!(await requirePrimaryOwnerAccess(msg, botId))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
         const parsed = parseSessionLeaseInput(raw.slice(13));
         const nameToAdd = parsed && parsed.name;
         if (!nameToAdd) return msg.reply('Write a session name.');
@@ -3408,7 +3409,7 @@ async function start(name) {
 
       if (text.startsWith('.session extend ') || text.startsWith('.session renew ')) {
         if (!(await requireOwnerAccess(msg))) return;
-        if (!(await requirePrimaryOwnerAccess(msg, botId))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
         const rawValue = raw.replace(/^\.session\s+(extend|renew)\s+/i, '');
         const parsed = parseSessionLeaseInput(rawValue);
         if (!parsed || !parsed.days) return msg.reply('Use: .session extend name 7');
@@ -3455,7 +3456,7 @@ async function start(name) {
 
       if (text.startsWith('.session pair')) {
         if (!(await requireOwnerAccess(msg))) return;
-        if (!(await requirePrimaryOwnerAccess(msg, botId))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
         const parts = raw.slice(13).trim().split(/\s+/).filter(Boolean);
         const requested = sessionName(parts[0]);
         const phone = String(parts[1] || '').replace(/\D/g, '');
@@ -3479,7 +3480,7 @@ async function start(name) {
 
       if (text.startsWith('.session remove ')) {
         if (!(await requireOwnerAccess(msg))) return;
-        if (!(await requirePrimaryOwnerAccess(msg, botId))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
         const nameToRemove = sessionName(raw.slice(16));
         if (!nameToRemove) return msg.reply('Write a session name.');
         if (!sessions.sessions.includes(nameToRemove)) return msg.reply('Session not found.');
