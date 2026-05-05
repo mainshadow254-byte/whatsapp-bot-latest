@@ -10,8 +10,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { pipeline } = require('stream/promises');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
+const execFileAsync = promisify(execFile);
 
 const MEMORY_FILE = './memory.json';
 const SESSION_FILE = './sessions.json';
@@ -705,6 +708,44 @@ async function scraperDownload(kind, videoUrl, outputPath) {
   return result;
 }
 
+async function ytDlpDownload(kind, videoUrl, outputPath) {
+  const baseArgs = [
+    '--no-playlist',
+    '--no-warnings',
+    '--force-overwrites',
+    '--user-agent',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36'
+  ];
+
+  const args = kind === 'video'
+    ? [
+        ...baseArgs,
+        '-f',
+        'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[height<=720]',
+        '--merge-output-format',
+        'mp4',
+        '-o',
+        outputPath,
+        videoUrl
+      ]
+    : [
+        ...baseArgs,
+        '-x',
+        '--audio-format',
+        'mp3',
+        '--audio-quality',
+        '128K',
+        '-o',
+        outputPath,
+        videoUrl
+      ];
+
+  await execFileAsync('yt-dlp', args, {
+    timeout: kind === 'video' ? VIDEO_DOWNLOAD_TIMEOUT_MS : AUDIO_DOWNLOAD_TIMEOUT_MS,
+    maxBuffer: 1024 * 1024 * 4
+  });
+}
+
 function removeFile(file) {
   fs.unlink(file, () => {});
 }
@@ -825,10 +866,15 @@ async function sendSong(msg, query) {
     }
 
     try {
-      await withTimeout(scraperDownload('audio', video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download');
-    } catch (scraperError) {
-      logLine(`Song scraper fallback (${scraperError.message})`);
-      await withTimeout(convertYoutubeToMp3(video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download fallback');
+      await withTimeout(ytDlpDownload('audio', video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download');
+    } catch (ytDlpError) {
+      logLine(`Song yt-dlp fallback (${ytDlpError.message})`);
+      try {
+        await withTimeout(scraperDownload('audio', video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download scraper fallback');
+      } catch (scraperError) {
+        logLine(`Song scraper fallback (${scraperError.message})`);
+        await withTimeout(convertYoutubeToMp3(video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download ytdl fallback');
+      }
     }
     assertUsableFile(file, MIN_AUDIO_BYTES, 'Song download');
     const media = MessageMedia.fromFilePath(file);
@@ -881,20 +927,25 @@ async function sendVideo(msg, query) {
     }
 
     try {
-      await withTimeout(scraperDownload('video', video.url, file), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download');
-    } catch (scraperError) {
-      logLine(`Video scraper fallback (${scraperError.message})`);
-      await withTimeout(new Promise((resolve, reject) => {
-        const stream = ytdl(video.url, {
-          quality: 'highest',
-          filter: format => format.container === 'mp4' && format.hasAudio && format.hasVideo
-        });
-        stream.on('error', reject);
-        stream
-          .pipe(fs.createWriteStream(file))
-          .on('finish', resolve)
-          .on('error', reject);
-      }), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download fallback');
+      await withTimeout(ytDlpDownload('video', video.url, file), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download');
+    } catch (ytDlpError) {
+      logLine(`Video yt-dlp fallback (${ytDlpError.message})`);
+      try {
+        await withTimeout(scraperDownload('video', video.url, file), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download scraper fallback');
+      } catch (scraperError) {
+        logLine(`Video scraper fallback (${scraperError.message})`);
+        await withTimeout(new Promise((resolve, reject) => {
+          const stream = ytdl(video.url, {
+            quality: 'highest',
+            filter: format => format.container === 'mp4' && format.hasAudio && format.hasVideo
+          });
+          stream.on('error', reject);
+          stream
+            .pipe(fs.createWriteStream(file))
+            .on('finish', resolve)
+            .on('error', reject);
+        }), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download ytdl fallback');
+      }
     }
 
     assertUsableFile(file, MIN_VIDEO_BYTES, 'Video download');
