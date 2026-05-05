@@ -978,7 +978,17 @@ async function sendVideo(msg, query) {
     const media = MessageMedia.fromFilePath(file);
     media.filename = `${title}.mp4`;
     await msg.react('✅').catch(() => {});
-    await msg.reply(media, undefined, { caption: `${video.title}\n${video.url}` });
+    const caption = `${video.title}\n${video.url}`;
+    try {
+      await msg.reply(media, undefined, { caption });
+    } catch (sendError) {
+      logLine(`Video inline send failed, retrying as document: ${sendError.message}`);
+      await sleep(2000);
+      await msg.reply(media, undefined, {
+        caption,
+        sendMediaAsDocument: true
+      });
+    }
   } catch (e) {
     logLine(`Video download failed: ${e && e.stack ? e.stack : e.message}`);
     await msg.react('❌').catch(() => {});
