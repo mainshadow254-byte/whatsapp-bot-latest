@@ -496,27 +496,28 @@ function safeFileName(name) {
     .slice(0, 80) || 'song';
 }
 
-function saleDetected(text) {
+function saleKeywordDetected(text) {
   const clean = String(text || '').toLowerCase();
-  return SALE_KEYWORDS.some(keyword => {
+  return SALE_KEYWORDS.find(keyword => {
     const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     if (keyword.includes(' ') || keyword.includes('-')) return clean.includes(keyword);
     return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(clean);
-  });
+  }) || null;
 }
 
-function antisaleWarning(displayName) {
-  return `⚠️ *Safety Reminder*
+function antisaleDetailWarning(displayName, keyword) {
+  return `*Anti-Sale Warning*
 
-*${displayName}*
+User: *${displayName}*
+Flagged word: ${keyword || 'sale/trade keyword'}
 
-Buying, selling, swapping, or trading inside a group can sometimes lead to scams or misunderstandings.
+This message looks like buying, selling, swapping, payment, delivery, or trading inside the group.
 
-For your own safety, please involve a group admin as escrow before sending money, goods, account details, login information, or any private information.
+For safety, involve a group admin before any deal. Admin escrow helps confirm the buyer, seller, item, payment, and delivery before anything is released.
 
-Admin escrow helps protect both the buyer and the seller by confirming the deal before anything is released.
+Do not send money, goods, account details, login information, or private information directly without admin approval.
 
-Please don't rush. Direct deals are done at your own risk.`;
+Allowed only when admins approve it. Direct deals are done at your own risk.`;
 }
 
 function badwordDetected(g, text) {
@@ -1853,14 +1854,15 @@ async function start(name) {
         }
       }
 
-      if (isGroup && g.antisale && !text.startsWith('.') && saleDetected(raw)) {
+      const saleKeyword = isGroup && g.antisale && !text.startsWith('.') ? saleKeywordDetected(raw) : null;
+      if (saleKeyword) {
         if (await isGroupAdmin(msg)) return;
         const contact = await contactFor(client, sender);
         const senderName = await displayNameFor(client, sender);
-        await msg.reply(antisaleWarning(senderName), undefined, {
+        await msg.reply(antisaleDetailWarning(senderName, saleKeyword), undefined, {
           mentions: contact ? [contact] : []
         });
-        await warnUser(client, msg, sender, 'Sale/trade warning. Please use admins as escrow.');
+        await warnUser(client, msg, sender, `Anti-sale: "${saleKeyword}" looks like buying, selling, payment, delivery, or trading. Use admin escrow before any deal.`);
         return;
       }
 
