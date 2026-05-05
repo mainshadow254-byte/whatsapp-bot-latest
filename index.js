@@ -92,24 +92,133 @@ const scheduleIntervals = {};
 const processedMessages = new Set();
 const botDeletedMessageIds = new Set();
 
+const BADWORDS_VERSION = 2;
 const DEFAULT_BADWORDS = [
   'fuck',
+  'fucking',
+  'fucker',
+  'motherfucker',
   'shit',
+  'bullshit',
   'bitch',
+  'bitches',
   'asshole',
   'bastard',
+  'damn',
+  'dick',
+  'cock',
+  'pussy',
+  'cunt',
+  'whore',
+  'slut',
+  'hoe',
+  'porn',
+  'sex',
+  'nude',
+  'nudes',
+  'naked',
+  'jerk',
+  'retard',
+  'moron',
   'idiot',
   'stupid',
   'nonsense',
+  'shenzi',
   'umbwa',
   'fala',
   'mjinga',
+  'mjinga sana',
+  'mpumbavu',
+  'pumbavu',
+  'mshenzi',
+  'ngombe',
+  'matako',
   'kuma',
+  'kumamake',
+  'kumamamako',
+  'kumbavu',
+  'mkundu',
   'mavi',
+  'kinyesi',
   'malaya',
+  'kahaba',
+  'ngono',
+  'uchi',
+  'tombwa',
+  'kutombana',
+  'tomba',
+  'nyonya',
+  'kunyonya',
+  'nyeto',
+  'punyeto',
+  'mkundu',
+  'shoga',
+  'firauni',
+  'msenge',
+  'mavi ya kuku',
   'scam',
   'conman',
   'fraud'
+];
+
+const SALE_KEYWORDS = [
+  'uza',
+  'kuuza',
+  'nauza',
+  'inauzwa',
+  'kuuzwa',
+  'sell',
+  'selling',
+  'sold',
+  'for sale',
+  'nunua',
+  'kununua',
+  'nanunua',
+  'buy',
+  'buying',
+  'purchase',
+  'order',
+  'bei',
+  'price',
+  'cost',
+  'offer',
+  'ofa',
+  'deal',
+  'trade',
+  'swap',
+  'exchange',
+  'biashara',
+  'soko',
+  'duka',
+  'stock',
+  'mzigo',
+  'bidhaa',
+  'product',
+  'goods',
+  'service',
+  'services',
+  'available',
+  'ipo',
+  'zipo',
+  'lipa',
+  'kulipa',
+  'malipo',
+  'payment',
+  'pay',
+  'paid',
+  'mpesa',
+  'm-pesa',
+  'till',
+  'paybill',
+  'deposit',
+  'delivery',
+  'deliver',
+  'shipping',
+  'ship',
+  'client',
+  'customer',
+  'mteja',
+  'wateja'
 ];
 
 function logLine(text) {
@@ -251,6 +360,10 @@ function group(id) {
   if (!Array.isArray(g.badwords)) g.badwords = [];
   g.badwords = [...new Set(g.badwords.map(word => String(word || '').trim().toLowerCase()).filter(Boolean))];
   if (!g.badwords.length) g.badwords = [...DEFAULT_BADWORDS];
+  if (Number(g.badwordsVersion || 0) < BADWORDS_VERSION) {
+    g.badwords = [...new Set([...g.badwords, ...DEFAULT_BADWORDS])];
+    g.badwordsVersion = BADWORDS_VERSION;
+  }
   if (!g.allowedPrefix) g.allowedPrefix = '254';
   if (typeof g.welcomeOn !== 'boolean') g.welcomeOn = true;
   if (typeof g.goodbyeOn !== 'boolean') g.goodbyeOn = true;
@@ -364,11 +477,14 @@ function sessionLeaseLine(name) {
 function parseSessionLeaseInput(rawValue) {
   const parts = String(rawValue || '').trim().split(/\s+/).filter(Boolean);
   const name = sessionName(parts[0]);
+  const plan = String(parts[1] || '').toLowerCase();
+  const unlimited = !plan || ['unlimited', 'forever', 'lifetime', 'permanent'].includes(plan);
   const days = Number(parts[1]);
   if (!name) return null;
   return {
     name,
-    days: Number.isInteger(days) && days > 0 ? days : null
+    days: Number.isInteger(days) && days > 0 ? days : null,
+    unlimited
   };
 }
 
@@ -381,7 +497,12 @@ function safeFileName(name) {
 }
 
 function saleDetected(text) {
-  return /\b(uza|nunua|buy|purchase|sell|selling|sold)\b/i.test(text);
+  const clean = String(text || '').toLowerCase();
+  return SALE_KEYWORDS.some(keyword => {
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (keyword.includes(' ') || keyword.includes('-')) return clean.includes(keyword);
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(clean);
+  });
 }
 
 function antisaleWarning(displayName) {
@@ -1935,7 +2056,8 @@ async function start(name) {
 .schedule run
 .schedule cancel id
 .session list
-.session add name days
+.session add name days/unlimited
+.add session name unlimited
 .session status name
 .session extend name days
 .session remove name
@@ -2752,7 +2874,7 @@ async function start(name) {
         });
       }
 
-      if (text.startsWith('.add ')) {
+      if (text.startsWith('.add ') && !text.startsWith('.add session ')) {
         if (!(await requireGroupAdmin(msg))) return;
 
         const target = normalizeNumber(raw.slice(5));
@@ -3175,7 +3297,7 @@ async function start(name) {
         return msg.reply('Warnings reset.');
       }
 
-      if (text.startsWith('.session add ')) {
+      if (text.startsWith('.session add ') || text.startsWith('.add session ')) {
         if (!(await requireOwnerAccess(msg))) return;
         if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
         const parsed = parseSessionLeaseInput(raw.slice(13));
@@ -3191,12 +3313,17 @@ async function start(name) {
           nextSession.leaseExpiresAt = now + parsed.days * DAY_MS;
           nextSession.leaseDays = parsed.days;
           nextSession.createdBy = sender;
+        } else if (parsed.unlimited) {
+          nextSession.leaseStartedAt = now;
+          nextSession.leaseExpiresAt = null;
+          nextSession.leaseDays = null;
+          nextSession.createdBy = sender;
         }
         save(SESSION_FILE, sessions);
         save(MEMORY_FILE, memory);
         start(nameToAdd);
         return msg.reply(
-          `Session ${nameToAdd} added${parsed.days ? ` for ${parsed.days} day${parsed.days === 1 ? '' : 's'}` : ''}.\n` +
+          `Session ${nameToAdd} added${parsed.days ? ` for ${parsed.days} day${parsed.days === 1 ? '' : 's'}` : ' as unlimited'}.\n` +
           `Use .session pair ${nameToAdd} 2547... for a far user, or .session qr ${nameToAdd} for QR.`
         );
       }
@@ -3206,11 +3333,20 @@ async function start(name) {
         if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
         const rawValue = raw.replace(/^\.session\s+(extend|renew)\s+/i, '');
         const parsed = parseSessionLeaseInput(rawValue);
-        if (!parsed || !parsed.days) return msg.reply('Use: .session extend name 7');
+        if (!parsed || (!parsed.days && !parsed.unlimited)) return msg.reply('Use: .session extend name 7 or .session renew name unlimited');
         if (!sessions.sessions.includes(parsed.name)) return msg.reply('Session not found.');
 
         const targetSession = sessionSettings(parsed.name);
         const now = Date.now();
+        if (parsed.unlimited && !parsed.days) {
+          targetSession.leaseStartedAt = targetSession.leaseStartedAt || now;
+          targetSession.leaseExpiresAt = null;
+          targetSession.leaseDays = null;
+          targetSession.updatedAt = now;
+          save(MEMORY_FILE, memory);
+          return msg.reply(`Session ${parsed.name} is now unlimited.\n${sessionLeaseLine(parsed.name)}`);
+        }
+
         const baseExpiry = Math.max(Number(targetSession.leaseExpiresAt || now), now);
         targetSession.leaseStartedAt = targetSession.leaseStartedAt || now;
         targetSession.leaseExpiresAt = baseExpiry + parsed.days * DAY_MS;
