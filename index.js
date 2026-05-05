@@ -278,7 +278,12 @@ function sessionSettings(name) {
       online: false,
       autostatus: false,
       statusText: 'Githinji Bot online',
-      persona: null
+      persona: null,
+      createdAt: Date.now(),
+      leaseStartedAt: null,
+      leaseExpiresAt: null,
+      leaseDays: null,
+      botId: null
     };
     save(MEMORY_FILE, memory);
   }
@@ -286,6 +291,7 @@ function sessionSettings(name) {
   if (!memory.sessions[name].mood) memory.sessions[name].mood = 'normal';
   if (!memory.sessions[name].autoreactEmoji) memory.sessions[name].autoreactEmoji = '💗';
   if (!memory.sessions[name].statusReact) memory.sessions[name].statusReact = '💗';
+  if (!memory.sessions[name].createdAt) memory.sessions[name].createdAt = Date.now();
   return memory.sessions[name];
 }
 
@@ -356,6 +362,46 @@ function parseHostingAdd(msg, rawValue) {
 
   if (!target || !Number.isInteger(days) || days < 1) return null;
   return { target, days };
+}
+
+function sessionLeaseStats(name) {
+  const session = memory.sessions && memory.sessions[name];
+  if (!session) return null;
+
+  const now = Date.now();
+  const startedAt = Number(session.leaseStartedAt || session.createdAt || now);
+  const expiresAt = Number(session.leaseExpiresAt || 0);
+  const totalDays = Number(session.leaseDays || (expiresAt ? Math.ceil((expiresAt - startedAt) / DAY_MS) : 0));
+  const connectedDays = Math.max(0, Math.floor((now - startedAt) / DAY_MS));
+  const remainingDays = expiresAt ? Math.max(0, Math.ceil((expiresAt - now) / DAY_MS)) : null;
+
+  return {
+    startedAt,
+    expiresAt,
+    totalDays,
+    connectedDays,
+    remainingDays,
+    expired: Boolean(expiresAt && expiresAt <= now),
+    unlimited: !expiresAt
+  };
+}
+
+function sessionLeaseLine(name) {
+  const stats = sessionLeaseStats(name);
+  if (!stats) return `${name}: missing`;
+  if (stats.unlimited) return `${name}: unlimited`;
+  return `${name}: ${stats.remainingDays} day${stats.remainingDays === 1 ? '' : 's'} left, connected ${stats.connectedDays} day${stats.connectedDays === 1 ? '' : 's'} (${stats.expired ? 'expired' : 'active'})`;
+}
+
+function parseSessionLeaseInput(rawValue) {
+  const parts = String(rawValue || '').trim().split(/\s+/).filter(Boolean);
+  const name = sessionName(parts[0]);
+  const days = Number(parts[1]);
+  if (!name) return null;
+  return {
+    name,
+    days: Number.isInteger(days) && days > 0 ? days : null
+  };
 }
 
 async function hostingTargetFromInput(msg, rawValue) {
@@ -1660,6 +1706,11 @@ async function start(name) {
 
   client.on('ready', () => {
     const botId = client.info && client.info.wid && client.info.wid._serialized;
+    const session = sessionSettings(name);
+    if (botId && session.botId !== botId) {
+      session.botId = botId;
+      save(MEMORY_FILE, memory);
+    }
     if (!ownerlock.primaryOwner && botId) {
       ownerlock.primaryOwner = botId;
       if (!ownerlock.owners.includes(botId)) ownerlock.owners.unshift(botId);
@@ -1700,6 +1751,16 @@ async function start(name) {
       const mentionedIds = msg.mentionedIds || [];
       const isCommand = text.startsWith('.');
       const isSessionOwnerCommand = Boolean(msg.fromMe || (botId && sender === botId));
+      const lease = sessionLeaseStats(name);
+
+      if (name !== 'main' && lease && lease.expired && isCommand && !text.startsWith('.session ')) {
+        return msg.reply(
+          `This bot session has expired.\n` +
+          `Session: ${name}\n` +
+          `Connected: ${lease.connectedDays} day${lease.connectedDays === 1 ? '' : 's'}\n` +
+          `${HOSTING_PROMO}`
+        );
+      }
 
       cacheMessage(msg);
       trackMessage(msg);
@@ -1948,7 +2009,9 @@ async function start(name) {
 .schedule run
 .schedule cancel id
 .session list
-.session add name
+.session add name days
+.session status name
+.session extend name days
 .session remove name
 .session qr
 .session pair${hostingPromoText()}`);
@@ -3297,14 +3360,64 @@ async function start(name) {
       if (text.startsWith('.session add ')) {
         if (!(await requireOwnerAccess(msg))) return;
         if (!(await requirePrimaryOwnerAccess(msg, botId))) return;
-        const nameToAdd = sessionName(raw.slice(13));
+        const parsed = parseSessionLeaseInput(raw.slice(13));
+        const nameToAdd = parsed && parsed.name;
         if (!nameToAdd) return msg.reply('Write a session name.');
         if (sessions.sessions.includes(nameToAdd)) return msg.reply('Session already exists.');
 
         sessions.sessions.push(nameToAdd);
+        const nextSession = sessionSettings(nameToAdd);
+        const now = Date.now();
+        if (parsed.days) {
+          nextSession.leaseStartedAt = now;
+          nextSession.leaseExpiresAt = now + parsed.days * DAY_MS;
+          nextSession.leaseDays = parsed.days;
+          nextSession.createdBy = sender;
+        }
         save(SESSION_FILE, sessions);
+        save(MEMORY_FILE, memory);
         start(nameToAdd);
-        return msg.reply(`Session ${nameToAdd} added. Scan its QR in the terminal.`);
+        return msg.reply(
+          `Session ${nameToAdd} added${parsed.days ? ` for ${parsed.days} day${parsed.days === 1 ? '' : 's'}` : ''}.\n` +
+          `Scan its QR in the terminal or use .session qr ${nameToAdd}.`
+        );
+      }
+
+      if (text.startsWith('.session extend ') || text.startsWith('.session renew ')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId))) return;
+        const rawValue = raw.replace(/^\.session\s+(extend|renew)\s+/i, '');
+        const parsed = parseSessionLeaseInput(rawValue);
+        if (!parsed || !parsed.days) return msg.reply('Use: .session extend name 7');
+        if (!sessions.sessions.includes(parsed.name)) return msg.reply('Session not found.');
+
+        const targetSession = sessionSettings(parsed.name);
+        const now = Date.now();
+        const baseExpiry = Math.max(Number(targetSession.leaseExpiresAt || now), now);
+        targetSession.leaseStartedAt = targetSession.leaseStartedAt || now;
+        targetSession.leaseExpiresAt = baseExpiry + parsed.days * DAY_MS;
+        targetSession.leaseDays = Number(targetSession.leaseDays || 0) + parsed.days;
+        targetSession.updatedAt = now;
+        save(MEMORY_FILE, memory);
+
+        return msg.reply(`Session ${parsed.name} extended by ${parsed.days} day${parsed.days === 1 ? '' : 's'}.\n${sessionLeaseLine(parsed.name)}`);
+      }
+
+      if (text.startsWith('.session status')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        const requested = sessionName(raw.slice(15).trim()) || name;
+        if (!sessions.sessions.includes(requested)) return msg.reply('Session not found.');
+        const details = sessionSettings(requested);
+        const stats = sessionLeaseStats(requested);
+        return msg.reply(
+          `*Session Status*\n\n` +
+          `Name: ${requested}\n` +
+          `Number: ${details.botId || 'not linked yet'}\n` +
+          `Plan: ${stats.unlimited ? 'Unlimited' : `${stats.totalDays} day${stats.totalDays === 1 ? '' : 's'}`}\n` +
+          `Connected: ${stats.connectedDays} day${stats.connectedDays === 1 ? '' : 's'}\n` +
+          `Remaining: ${stats.unlimited ? 'Unlimited' : `${stats.remainingDays} day${stats.remainingDays === 1 ? '' : 's'}`}\n` +
+          `Status: ${stats.expired ? 'Expired' : 'Active'}`
+        );
       }
 
       if (text.startsWith('.session qr')) {
@@ -3365,7 +3478,8 @@ async function start(name) {
       }
 
       if (text === '.session list') {
-        return msg.reply(sessions.sessions.join('\n'));
+        if (!(await requireOwnerAccess(msg))) return;
+        return msg.reply(sessions.sessions.map(sessionLeaseLine).join('\n'));
       }
 
       if (!text.startsWith('.') && session.autoreact && msg.react) {
