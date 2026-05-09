@@ -868,16 +868,38 @@ async function contactFor(client, id) {
   return client.getContactById(id).catch(() => null);
 }
 
+function cleanPhoneId(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  const id = raw
+    .replace('@s.whatsapp.net', '@c.us')
+    .replace('@lid', '');
+  const number = id.replace('@c.us', '').replace(/\D/g, '');
+  return number ? `${number}@c.us` : null;
+}
+
 function contactNumberId(contact) {
   if (!contact) return null;
-
-  const number = String(contact.number || '').replace(/\D/g, '');
-  if (number) return `${number}@c.us`;
 
   const id = contact.id && contact.id._serialized;
   if (isContactId(id)) return id;
 
+  const phoneId = cleanPhoneId(contact.number);
+  if (phoneId && !String(id || '').endsWith('@lid')) return phoneId;
+
   return null;
+}
+
+async function lidPhoneId(client, id) {
+  if (!id || !String(id).endsWith('@lid') || typeof client.getContactLidAndPhone !== 'function') return null;
+
+  const pairs = await client.getContactLidAndPhone([id]).catch(() => null);
+  const match = Array.isArray(pairs)
+    ? pairs.find(item => item && (item.lid === id || item.pn))
+    : null;
+
+  return cleanPhoneId(match && match.pn);
 }
 
 async function senderLogId(client, msg, fallbackId) {
@@ -886,6 +908,9 @@ async function senderLogId(client, msg, fallbackId) {
     : null;
   const directNumber = contactNumberId(directContact);
   if (directNumber) return directNumber;
+
+  const lidNumber = await lidPhoneId(client, fallbackId);
+  if (lidNumber) return lidNumber;
 
   const lookupContact = await contactFor(client, fallbackId);
   const lookupNumber = contactNumberId(lookupContact);
