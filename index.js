@@ -2423,17 +2423,17 @@ async function start(name) {
 .define word
 
 *Personality*
-.mood flirty
-.mood soft
-.mood teasing
-.mood clingy
-.mood jealous
-.mood savage
-.mood loyal
-.mood shy
-.mood dramatic
-.mood girlfriend
-.mood romantic
+.mood flirty on/off
+.mood soft on/off
+.mood teasing on/off
+.mood clingy on/off
+.mood jealous on/off
+.mood savage on/off
+.mood loyal on/off
+.mood shy on/off
+.mood dramatic on/off
+.mood girlfriend on/off
+.mood romantic on/off
 .nickname yourname
 .mynick
 .persona custom your personality
@@ -3139,9 +3139,14 @@ async function start(name) {
       }
 
       if (text.startsWith('.mood ')) {
-        const nextMood = text.split(/\s+/)[1];
+        const parts = text.split(/\s+/);
+        const requestedMood = parts[1];
+        const toggle = parts[2];
         const allowed = ['normal', 'flirty', 'soft', 'teasing', 'clingy', 'jealous', 'sweet', 'sassy', 'savage', 'romantic', 'funny', 'loyal', 'rude', 'shy', 'dramatic', 'girlfriend', 'bestie'];
-        if (!allowed.includes(nextMood)) return msg.reply(`Use one of: ${allowed.join(', ')}`);
+        if (!allowed.includes(requestedMood)) return msg.reply(`Use one of: ${allowed.join(', ')}`);
+        if (toggle && !['on', 'off'].includes(toggle)) return msg.reply(`Use .mood ${requestedMood} on or .mood ${requestedMood} off.`);
+
+        const nextMood = toggle === 'off' ? 'normal' : requestedMood;
 
         if (isGroup) {
           if (!(await requireGroupAdmin(msg))) return;
@@ -3151,7 +3156,8 @@ async function start(name) {
         }
 
         save(MEMORY_FILE, memory);
-        return msg.reply(`Mood set to ${nextMood}.`);
+        if (toggle === 'off') return msg.reply(`${requestedMood} mood OFF. Mood set to normal.`);
+        return msg.reply(`${nextMood} mood ON.`);
       }
 
       if (text === '.persona status') {
