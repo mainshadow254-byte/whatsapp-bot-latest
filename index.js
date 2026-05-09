@@ -866,6 +866,30 @@ async function contactFor(client, id) {
   return client.getContactById(id).catch(() => null);
 }
 
+function contactNumberId(contact) {
+  if (!contact) return null;
+
+  const number = String(contact.number || '').replace(/\D/g, '');
+  if (number) return `${number}@c.us`;
+
+  const id = contact.id && contact.id._serialized;
+  if (isContactId(id)) return id;
+
+  return null;
+}
+
+async function senderLogId(client, msg, fallbackId) {
+  const directContact = typeof msg.getContact === 'function'
+    ? await msg.getContact().catch(() => null)
+    : null;
+  const directNumber = contactNumberId(directContact);
+  if (directNumber) return directNumber;
+
+  const lookupContact = await contactFor(client, fallbackId);
+  const lookupNumber = contactNumberId(lookupContact);
+  return lookupNumber || fallbackId;
+}
+
 function isContactId(id) {
   return /^\d+@c\.us$/.test(String(id || ''));
 }
@@ -2281,7 +2305,8 @@ async function start(name) {
       cacheMessage(msg);
       trackMessage(msg);
 
-      logLine(`[${name}] message from ${sender}: ${raw.slice(0, 80) || `[${msg.type || 'media'}]`}`);
+      const logSender = await senderLogId(client, msg, sender);
+      logLine(`[${name}] message from ${logSender}: ${raw.slice(0, 80) || `[${msg.type || 'media'}]`}`);
 
       if (text === '.allowinvite') {
         if (isGroup) return msg.reply('Send .allowinvite privately to the bot.');
