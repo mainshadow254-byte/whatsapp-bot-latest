@@ -34,6 +34,8 @@ const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 const MONTH_MS = 30 * DAY_MS;
+const MOODS = ['normal', 'flirty', 'soft', 'teasing', 'clingy', 'jealous', 'sweet', 'sassy', 'savage', 'romantic', 'funny', 'loyal', 'rude', 'shy', 'dramatic', 'girlfriend', 'bestie'];
+const MOOD_COMMANDS = MOODS.filter(mood => mood !== 'normal').map(mood => `.mood ${mood} on/off`);
 
 function load(file, def) {
   try {
@@ -2423,17 +2425,7 @@ async function start(name) {
 .define word
 
 *Personality*
-.mood flirty on/off
-.mood soft on/off
-.mood teasing on/off
-.mood clingy on/off
-.mood jealous on/off
-.mood savage on/off
-.mood loyal on/off
-.mood shy on/off
-.mood dramatic on/off
-.mood girlfriend on/off
-.mood romantic on/off
+${MOOD_COMMANDS.join('\n')}
 .nickname yourname
 .mynick
 .persona custom your personality
@@ -3131,7 +3123,7 @@ async function start(name) {
       }
 
       if (text === '.mood list') {
-        return msg.reply('Available moods: normal, flirty, soft, teasing, clingy, jealous, sweet, sassy, savage, romantic, funny, loyal, rude, shy, dramatic, girlfriend, bestie');
+        return msg.reply(MOOD_COMMANDS.join('\n'));
       }
 
       if (text === '.mood') {
@@ -3142,8 +3134,7 @@ async function start(name) {
         const parts = text.split(/\s+/);
         const requestedMood = parts[1];
         const toggle = parts[2];
-        const allowed = ['normal', 'flirty', 'soft', 'teasing', 'clingy', 'jealous', 'sweet', 'sassy', 'savage', 'romantic', 'funny', 'loyal', 'rude', 'shy', 'dramatic', 'girlfriend', 'bestie'];
-        if (!allowed.includes(requestedMood)) return msg.reply(`Use one of: ${allowed.join(', ')}`);
+        if (!MOODS.includes(requestedMood)) return msg.reply(`Use one of:\n${MOOD_COMMANDS.join('\n')}`);
         if (toggle && !['on', 'off'].includes(toggle)) return msg.reply(`Use .mood ${requestedMood} on or .mood ${requestedMood} off.`);
 
         const nextMood = toggle === 'off' ? 'normal' : requestedMood;
