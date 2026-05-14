@@ -2721,167 +2721,197 @@ async function start(name) {
       }
 
       if (text === '.menu') {
-        return msg.reply(`*Githinji Bot Menu*
+        return msg.reply(`╔═══━━━── • ──━━━═══╗
+✨ 𝙂𝙄𝙏𝙃𝙄𝙉𝙅𝙄 𝘽𝙊𝙏 ✨
+『 𝐏𝐑𝐄𝐌𝐈𝐔𝐌 𝐌𝐄𝐍𝐔 』
+╚═══━━━── • ──━━━═══╝
 
-*AI / Private*
-.ask your question
-.chatbot pm on/off
-.chatbotgroup on/off
-.smart on/off
-.typing on/off
-.online on/off
-.summarize text
-.define word
+🌐 𝐒𝐭𝐮𝐝𝐲𝐍𝐞𝐬𝐭 𝐀𝐜𝐚𝐝𝐞𝐦𝐲
+📚 Notes • Revision • Past Papers • Study Resources
+🎓 Secondary School & University Materials
+⚡ Fast Downloads • Smart Learning • Premium Experience
 
-*Personality*
-${MOOD_COMMANDS.join('\n')}
-.nickname yourname
-.mynick
-.persona custom your personality
-.persona reset
+🔗 studynestacademy.com
 
-*Fun*
-.truth
-.dare
-.joke
-.rate me
-.ship @user1 @user2
-.pickline
-.roast
-.confess
-.8ball question
-.wouldyourather
-.lovequote
-.fact
-.riddle
-.coinflip
-.dice
+━━━━━━━━━━━━━━━━━━
 
-*Games*
-.rps rock/paper/scissors
-.quiz
-.mathquiz
-.numbergame
-.scramble
-.tictactoe @user
+╭─❍ 「 🤖 AI & PRIVATE 」
+│ ⌁ .ask question
+│ ⌁ .chatbot pm on/off
+│ ⌁ .chatbotgroup on/off
+│ ⌁ .smart on/off
+│ ⌁ .typing on/off
+│ ⌁ .online on/off
+│ ⌁ .summarize text
+│ ⌁ .define word
+╰───────────────❍
 
-*Media*
-.sticker
-.viewonce
-.toimg
-.tomp3
-.tomp4
-.play song name
-.play video name
-.ytmp3 song name
-.ytmp4 video name
-.qr text
+╭─❍ 「 🎭 PERSONALITY 」
+│ ♡ .mood flirty
+│ ♡ .mood soft
+│ ♡ .mood teasing
+│ ♡ .mood clingy
+│ ♡ .mood jealous
+│ ♡ .mood sweet
+│ ♡ .mood sassy
+│ ♡ .mood savage
+│ ♡ .mood romantic
+│ ♡ .mood funny
+│ ♡ .mood loyal
+│ ♡ .mood rude
+│ ♡ .mood shy
+│ ♡ .mood dramatic
+│ ♡ .mood girlfriend
+│ ♡ .mood bestie
+│ ♡ .nickname yourname
+│ ♡ .mynick
+│ ♡ .persona custom
+│ ♡ .persona reset
+╰───────────────❍
 
-*Welcome*
-.welcome on/off
-.setwelcome text
-.goodbye on/off
-.setgoodbye text
+╭─❍ 「 🎮 FUN & GAMES 」
+│ ✦ .truth
+│ ✦ .dare
+│ ✦ .joke
+│ ✦ .rate me
+│ ✦ .ship @user1 @user2
+│ ✦ .pickline
+│ ✦ .roast
+│ ✦ .confess
+│ ✦ .8ball question
+│ ✦ .wouldyourather
+│ ✦ .lovequote
+│ ✦ .fact
+│ ✦ .riddle
+│ ✦ .coinflip
+│ ✦ .dice
+│ ✦ .rps rock/paper/scissors
+│ ✦ .quiz
+│ ✦ .mathquiz
+│ ✦ .numbergame
+│ ✦ .scramble
+│ ✦ .tictactoe @user
+╰───────────────❍
 
-*Contacts / Group Transfer*
-.savecontacts
-.listcontacts
-.invite 50
-.inviteall
-.invite status
-.invite reset
-.clearsaved
-.stopinvite
+╭─❍ 「 🎬 MEDIA 」
+│ ➤ .sticker
+│ ➤ .viewonce
+│ ➤ .toimg
+│ ➤ .tomp3
+│ ➤ .tomp4
+│ ➤ .play song
+│ ➤ .play video
+│ ➤ .ytmp3
+│ ➤ .ytmp4
+│ ➤ .qr text
+╰───────────────❍
 
-*Bot Admin Access*
-.allowadmin @user
-.allowadmin global @user
-.removeadmin @user
-.removeadmin global @user
-.listadmins
+╭─❍ 「 📢 CONTACTS & INVITES 」
+│ ➤ .savecontacts
+│ ➤ .listcontacts
+│ ➤ .invite 25
+│ ➤ .inviteall
+│ ➤ .invite status
+│ ➤ .invite reset
+│ ➤ .clearsaved
+│ ➤ .stopinvite
+╰───────────────❍
 
-*Protection*
-.antilink on/off
-.antimention on/off
-.antimention limit 5
-.antispam on/off
-.antibadword on/off
-.antidelete on/off
-.antisale on/off
-.antiviewonce on/off
-.antiforeign on/off
-.antifake on/off
-.antiforward on/off
-.antisticker on/off
-.antimedia on/off
-.antidocument on/off
+╭─❍ 「 🛡️ PROTECTION 」
+│ ⚔️ .antilink
+│ ⚔️ .antimention
+│ ⚔️ .antispam
+│ ⚔️ .antibadword
+│ ⚔️ .antidelete
+│ ⚔️ .antisale
+│ ⚔️ .antiviewonce
+│ ⚔️ .antiforeign
+│ ⚔️ .antifake
+│ ⚔️ .antiforward
+│ ⚔️ .antisticker
+│ ⚔️ .antimedia
+│ ⚔️ .antidocument
+╰───────────────❍
 
-*Moderation*
-.warn @user
-.warns
-.resetwarn @user
-.setwarnlimit 3
-.promote @user
-.demote @user
-.kick @user
-.add 2547...
-.mute @user 10m
-.purge @user 30
-.tagall
-.hidetag message
-.tagadmins
-.owner
-.botadmin
-.group open
-.group close
-.group info
-.group link
-.revoke link
-.setname text
-.setdesc text
-.setpp
-.delete
-.deleteall @user
+╭─❍ 「 🔧 MODERATION 」
+│ ✧ .warn @user
+│ ✧ .warns
+│ ✧ .resetwarn @user
+│ ✧ .setwarnlimit 3
+│ ✧ .promote @user
+│ ✧ .demote @user
+│ ✧ .kick @user
+│ ✧ .add 2547...
+│ ✧ .mute @user 10m
+│ ✧ .purge @user 30
+│ ✧ .tagall
+│ ✧ .hidetag message
+│ ✧ .tagadmins
+│ ✧ .group open
+│ ✧ .group close
+│ ✧ .group info
+│ ✧ .group link
+│ ✧ .revoke link
+│ ✧ .setname text
+│ ✧ .setdesc text
+│ ✧ .setpp
+│ ✧ .delete
+│ ✧ .deleteall @user
+╰───────────────❍
 
-*Status*
-.viewstatus on/off
-.likestatus on/off
-.reactstatus emoji
-.setstatus text
-.autostatus on/off
+╭─❍ 「 🔐 BOT ADMIN ACCESS 」
+│ ⌁ .allowadmin @user
+│ ⌁ .allowadmin global @user
+│ ⌁ .removeadmin @user
+│ ⌁ .removeadmin global @user
+│ ⌁ .listadmins
+╰───────────────❍
 
-*Owner*
-.ping
-.runtime
-.settings
-.active
-.ownerlock on/off
-.owner add @user
-.owner remove @user
-.owner list
-.restart
-.shutdown
-.logs
-.backup
-.restore
-.schedule groups
-.schedule add target | time | message
-.schedule list
-.schedule run
-.schedule cancel id
-.session list
-.session add name 12h/7d/10w/3m/unlimited
-.add session name 12h/7d/unlimited
-.session status name
-.session extend name 12h/7d/10w/3m
-.session reduce name 12h/7d/10w/3m
-.session renew name unlimited
-.session pause name
-.session resume name
-.session cancel name
-.session remove name
-.session qr
-.session pair name 2547...${hostingPromoText()}`);
+╭─❍ 「 📡 STATUS 」
+│ ➤ .viewstatus on/off
+│ ➤ .likestatus on/off
+│ ➤ .reactstatus emoji
+│ ➤ .setstatus text
+│ ➤ .autostatus on/off
+╰───────────────❍
+
+╭─❍ 「 👑 OWNER 」
+│ ☁️ .ping
+│ ☁️ .runtime
+│ ☁️ .settings
+│ ☁️ .active
+│ ☁️ .ownerlock on/off
+│ ☁️ .owner add @user
+│ ☁️ .owner remove @user
+│ ☁️ .owner list
+│ ☁️ .restart
+│ ☁️ .shutdown
+│ ☁️ .logs
+│ ☁️ .backup
+│ ☁️ .restore
+│ ☁️ .schedule groups
+│ ☁️ .schedule add target | time | message
+│ ☁️ .schedule list
+│ ☁️ .schedule run
+│ ☁️ .schedule cancel id
+│ ☁️ .session list
+│ ☁️ .session add name 12h/7d/10w/3m/unlimited
+│ ☁️ .session status name
+│ ☁️ .session extend name 12h/7d/10w/3m
+│ ☁️ .session reduce name 12h/7d/10w/3m
+│ ☁️ .session renew name unlimited
+│ ☁️ .session pause name
+│ ☁️ .session resume name
+│ ☁️ .session cancel name
+│ ☁️ .session remove name
+│ ☁️ .session qr
+│ ☁️ .session pair name 2547...
+╰───────────────❍
+
+━━━━━━━━━━━━━━━━━━
+💎 𝐁𝐨𝐭 𝐇𝐨𝐬𝐭𝐢𝐧𝐠 𝐀𝐯𝐚𝐢𝐥𝐚𝐛𝐥𝐞
+📞 +254 772 418884
+━━━━━━━━━━━━━━━━━━`);
       }
 
       if (text === '.ping') return msg.reply(`Pong. Session ${name} is alive.`);
