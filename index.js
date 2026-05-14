@@ -34,6 +34,18 @@ const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 const MONTH_MS = 30 * DAY_MS;
+const INVITE_DEFAULT_LIMIT = 50;
+const INVITE_MAX_PER_RUN = 50;
+const INVITE_DIRECT_BATCH_SIZE = 3;
+const INVITE_DIRECT_BATCH_DELAY_MS = 45000;
+const INVITE_DM_DELAY_MS = 15000;
+const INVITE_COOLDOWN_MS = 72 * HOUR_MS;
+const PLAN_REMINDER_INTERVAL_MS = HOUR_MS;
+const PLAN_REMINDER_THRESHOLDS = [
+  { key: '3d', label: '3 days', ms: 3 * DAY_MS },
+  { key: '1d', label: '1 day', ms: DAY_MS },
+  { key: '6h', label: '6 hours', ms: 6 * HOUR_MS }
+];
 const MOODS = ['normal', 'flirty', 'soft', 'teasing', 'clingy', 'jealous', 'sweet', 'sassy', 'savage', 'romantic', 'funny', 'loyal', 'rude', 'shy', 'dramatic', 'girlfriend', 'bestie'];
 const MOOD_COMMANDS = MOODS.filter(mood => mood !== 'normal').map(mood => `.mood ${mood} on/off`);
 
@@ -55,7 +67,9 @@ let memory = load(MEMORY_FILE, {
   sessions: {},
   warns: {},
   savedContacts: {},
-  inviteOptIns: {}
+  inviteOptIns: {},
+  inviteHistory: {},
+  botAdmins: { global: {}, groups: {} }
 });
 
 let sessions = load(SESSION_FILE, { sessions: ['main'] });
@@ -72,6 +86,10 @@ function normalizeRuntimeState() {
   if (!memory.warns) memory.warns = {};
   if (!memory.savedContacts || Array.isArray(memory.savedContacts)) memory.savedContacts = {};
   if (!memory.inviteOptIns || Array.isArray(memory.inviteOptIns)) memory.inviteOptIns = {};
+  if (!memory.inviteHistory || Array.isArray(memory.inviteHistory)) memory.inviteHistory = {};
+  if (!memory.botAdmins || Array.isArray(memory.botAdmins)) memory.botAdmins = {};
+  if (!memory.botAdmins.global || Array.isArray(memory.botAdmins.global)) memory.botAdmins.global = {};
+  if (!memory.botAdmins.groups || Array.isArray(memory.botAdmins.groups)) memory.botAdmins.groups = {};
   if (!Array.isArray(sessions.sessions)) sessions.sessions = ['main'];
   if (!sessions.sessions.length) sessions.sessions = ['main'];
   if (!Array.isArray(ownerlock.owners)) ownerlock.owners = [];
@@ -94,6 +112,7 @@ const botLogs = [];
 const games = {};
 const lastSessionQr = {};
 const scheduleIntervals = {};
+const planReminderIntervals = {};
 const processedMessages = new Set();
 const botDeletedMessageIds = new Set();
 
@@ -471,20 +490,58 @@ function isTrustedOwner(id) {
   return ownerlock.owners.includes(id);
 }
 
+function isSessionCommandOwner(msg) {
+  return Boolean(msg.fromMe || isTrustedOwner(activeSenderId(msg)));
+}
+
 async function requireOwnerAccess(msg) {
-  if (!ownerlock.enabled) return true;
-  if (!ownerlock.owners.length) return true;
-  if (isTrustedOwner(activeSenderId(msg))) return true;
+  if (isSessionCommandOwner(msg)) return true;
   await msg.reply('Owner lock is ON. This command is restricted.');
   return false;
 }
 
 async function requirePrimaryOwnerAccess(msg, botId, sessionNameValue) {
   if (!ownerlock.primaryOwner) return true;
-  if (sessionNameValue === 'main' && (msg.fromMe || isTrustedOwner(activeSenderId(msg)))) return true;
-  if (botId === ownerlock.primaryOwner && (msg.fromMe || isTrustedOwner(activeSenderId(msg)))) return true;
+  if (sessionNameValue === 'main' && msg.fromMe) return true;
+  if (botId === ownerlock.primaryOwner && msg.fromMe) return true;
   await msg.reply('Only the first deployed bot number can use this command.');
   return false;
+}
+
+function ensureBotAdmins() {
+  if (!memory.botAdmins || Array.isArray(memory.botAdmins)) memory.botAdmins = {};
+  if (!memory.botAdmins.global || Array.isArray(memory.botAdmins.global)) memory.botAdmins.global = {};
+  if (!memory.botAdmins.groups || Array.isArray(memory.botAdmins.groups)) memory.botAdmins.groups = {};
+  return memory.botAdmins;
+}
+
+function groupBotAdmins(groupId) {
+  const botAdmins = ensureBotAdmins();
+  if (!botAdmins.groups[groupId]) botAdmins.groups[groupId] = {};
+  return botAdmins.groups[groupId];
+}
+
+function isAllowedBotAdmin(sender, groupId) {
+  if (!sender) return false;
+  const botAdmins = ensureBotAdmins();
+  return Boolean(botAdmins.global[sender] || (groupId && botAdmins.groups[groupId] && botAdmins.groups[groupId][sender]));
+}
+
+function canUseGroupAdminCommands(msg, groupId) {
+  const sender = activeSenderId(msg);
+  return Boolean(isSessionCommandOwner(msg) || isAllowedBotAdmin(sender, groupId));
+}
+
+function botAdminScope(rawValue) {
+  const raw = String(rawValue || '').trim().toLowerCase();
+  return raw.includes(' global ') || raw.endsWith(' global') || raw.startsWith('global ') ? 'global' : 'group';
+}
+
+function botAdminTargetFromInput(msg, rawValue) {
+  const mentioned = firstMention(msg);
+  if (mentioned) return mentioned;
+  const clean = String(rawValue || '').replace(/\bglobal\b/ig, '').trim();
+  return normalizeNumber(clean);
 }
 
 function tag(id) {
@@ -712,6 +769,52 @@ Kindly contact the bot owner/admin to renew and reactivate your access.
 ✅ Renew to continue using the bot.`;
 }
 
+function planReminderText(name, stats, threshold) {
+  const remaining = threshold ? threshold.label : formatDurationMs(stats.remainingMs);
+  return `Githinji Bot subscription reminder\n\n` +
+    `Session: ${name}\n` +
+    `Remaining: ${remaining}\n\n` +
+    `Please renew before it ends to avoid interruption.`;
+}
+
+function resetLeaseReminders(session) {
+  session.leaseRemindersSent = {};
+}
+
+async function sendPlanReminder(client, name, key, threshold, stats) {
+  const session = sessionSettings(name);
+  if (!session.botId) return;
+  if (!session.leaseRemindersSent || Array.isArray(session.leaseRemindersSent)) session.leaseRemindersSent = {};
+  if (session.leaseRemindersSent[key]) return;
+
+  await client.sendMessage(session.botId, planReminderText(name, stats, threshold));
+  session.leaseRemindersSent[key] = Date.now();
+  save(MEMORY_FILE, memory);
+}
+
+async function checkPlanReminders(client, name) {
+  const stats = sessionLeaseStats(name);
+  if (!stats || stats.unlimited || stats.paused || !stats.expiresAt) return;
+
+  if (stats.expired) {
+    return sendPlanReminder(client, name, 'expired', null, stats);
+  }
+
+  for (const threshold of [...PLAN_REMINDER_THRESHOLDS].reverse()) {
+    if (stats.remainingMs <= threshold.ms) {
+      return sendPlanReminder(client, name, threshold.key, threshold, stats);
+    }
+  }
+}
+
+function startPlanReminderLoop(client, name) {
+  if (planReminderIntervals[name]) return;
+  checkPlanReminders(client, name).catch(e => logLine(`Plan reminder check failed (${name}): ${e.message}`));
+  planReminderIntervals[name] = setInterval(() => {
+    checkPlanReminders(client, name).catch(e => logLine(`Plan reminder check failed (${name}): ${e.message}`));
+  }, PLAN_REMINDER_INTERVAL_MS);
+}
+
 function parsePlanDays(rawPlan) {
   const plan = String(rawPlan || '').trim().toLowerCase();
   if (!plan) return { days: null, unlimited: false, label: '' };
@@ -925,6 +1028,174 @@ function savedContactList() {
   return Object.values(memory.savedContacts || {}).filter(item => item && isContactId(item.id));
 }
 
+function inviteHistoryFor(groupId) {
+  if (!memory.inviteHistory || Array.isArray(memory.inviteHistory)) memory.inviteHistory = {};
+  if (!memory.inviteHistory[groupId]) memory.inviteHistory[groupId] = {};
+  return memory.inviteHistory[groupId];
+}
+
+function inviteHistoryLine(entry) {
+  if (!entry || !entry.lastAt) return null;
+  const action = entry.status || 'attempted';
+  const agoMs = Date.now() - Number(entry.lastAt || 0);
+  return `${action} ${formatDurationMs(agoMs)} ago`;
+}
+
+function parseInviteLimit(text) {
+  if (text === '.inviteall') return INVITE_DEFAULT_LIMIT;
+  const match = String(text || '').match(/^\.invite(?:\s+(\d+))?$/);
+  if (!match) return null;
+  const requested = Number(match[1] || INVITE_DEFAULT_LIMIT);
+  if (!Number.isFinite(requested) || requested <= 0) return INVITE_DEFAULT_LIMIT;
+  return Math.min(Math.floor(requested), INVITE_MAX_PER_RUN);
+}
+
+function inviteCandidateList(chat, limit) {
+  const groupId = chat.id && chat.id._serialized;
+  const now = Date.now();
+  const history = inviteHistoryFor(groupId);
+  const existingMembers = new Set((chat.participants || []).map(p => p.id && p.id._serialized).filter(Boolean));
+  const ownerSet = new Set([ownerlock.primaryOwner, ...ownerlock.owners].filter(Boolean));
+  const candidates = [];
+  let cooledDown = 0;
+  let alreadyInGroup = 0;
+  let optedOut = 0;
+
+  for (const item of savedContactList()) {
+    if (ownerSet.has(item.id)) continue;
+    if (existingMembers.has(item.id)) {
+      alreadyInGroup += 1;
+      continue;
+    }
+    if (memory.inviteOptIns && memory.inviteOptIns[item.id] && memory.inviteOptIns[item.id].blocked) {
+      optedOut += 1;
+      continue;
+    }
+
+    const previous = history[item.id];
+    if (previous && previous.lastAt && now - Number(previous.lastAt) < INVITE_COOLDOWN_MS) {
+      cooledDown += 1;
+      continue;
+    }
+
+    candidates.push(item);
+  }
+
+  return {
+    selected: candidates.slice(0, limit),
+    eligible: candidates.length,
+    cooledDown,
+    alreadyInGroup,
+    optedOut,
+    totalSaved: savedContactList().length
+  };
+}
+
+async function tryAddParticipantBatch(chat, ids) {
+  try {
+    const result = await chat.addParticipants(ids);
+    if (!result || typeof result !== 'object') {
+      return ids.map(id => ({ id, added: true }));
+    }
+
+    return ids.map(id => {
+      const value = result[id] || result[id.replace('@c.us', '')];
+      if (!value) return { id, added: true };
+      const code = Number(value.code || value.status || 0);
+      return { id, added: code >= 200 && code < 300, code, message: value.message || value.error || '' };
+    });
+  } catch (e) {
+    return ids.map(id => ({ id, added: false, message: e.message }));
+  }
+}
+
+async function sendInviteLink(client, item, inviteLink, groupName) {
+  await client.sendMessage(
+    item.id,
+    `Hi ${item.name || 'there'}, you are invited to join ${groupName || 'this group'}:\n${inviteLink}`
+  );
+}
+
+async function runInviteFlow(client, msg, limit) {
+  if (!(await requireGroupAdmin(msg))) return;
+
+  const chat = await msg.getChat();
+  if (!(await botIsAdmin(client, chat))) {
+    return msg.reply('Make the bot a group admin first so it can add people or fetch the invite link.');
+  }
+
+  const groupId = chat.id && chat.id._serialized;
+  const history = inviteHistoryFor(groupId);
+  const code = await chat.getInviteCode();
+  const inviteLink = `https://chat.whatsapp.com/${code}`;
+  const candidateInfo = inviteCandidateList(chat, limit);
+  const selected = candidateInfo.selected;
+
+  if (!selected.length) {
+    return msg.reply(
+      `No eligible saved contacts right now.\n` +
+      `Saved: ${candidateInfo.totalSaved}\n` +
+      `Already in group: ${candidateInfo.alreadyInGroup}\n` +
+      `Cooling down: ${candidateInfo.cooledDown}\n` +
+      `Opted out: ${candidateInfo.optedOut}`
+    );
+  }
+
+  await msg.reply(
+    `Invite run started for ${selected.length}/${candidateInfo.eligible} eligible contacts.\n` +
+    `Direct add batch: ${INVITE_DIRECT_BATCH_SIZE}\n` +
+    `Add delay: ${Math.round(INVITE_DIRECT_BATCH_DELAY_MS / 1000)}s\n` +
+    `Invite link fallback delay: ${Math.round(INVITE_DM_DELAY_MS / 1000)}s\n` +
+    `Cooldown: ${Math.round(INVITE_COOLDOWN_MS / HOUR_MS)} hours`
+  );
+
+  let added = 0;
+  let linked = 0;
+  let failed = 0;
+  const fallback = [];
+
+  for (let i = 0; i < selected.length; i += INVITE_DIRECT_BATCH_SIZE) {
+    const batch = selected.slice(i, i + INVITE_DIRECT_BATCH_SIZE);
+    const outcomes = await tryAddParticipantBatch(chat, batch.map(item => item.id));
+
+    for (const outcome of outcomes) {
+      const item = batch.find(candidate => candidate.id === outcome.id);
+      if (!item) continue;
+      if (outcome.added) {
+        added += 1;
+        history[item.id] = { status: 'added', lastAt: Date.now() };
+      } else {
+        fallback.push(item);
+      }
+    }
+
+    save(MEMORY_FILE, memory);
+    if (i + INVITE_DIRECT_BATCH_SIZE < selected.length) await sleep(INVITE_DIRECT_BATCH_DELAY_MS);
+  }
+
+  for (const item of fallback) {
+    try {
+      await sendInviteLink(client, item, inviteLink, chat.name);
+      linked += 1;
+      history[item.id] = { status: 'link-sent', lastAt: Date.now() };
+    } catch (e) {
+      failed += 1;
+      history[item.id] = { status: 'failed', lastAt: Date.now(), error: e.message };
+    }
+
+    save(MEMORY_FILE, memory);
+    await sleep(INVITE_DM_DELAY_MS);
+  }
+
+  return msg.reply(
+    `Invite run finished.\n` +
+    `Added directly: ${added}\n` +
+    `Sent invite link: ${linked}\n` +
+    `Failed: ${failed}\n` +
+    `Cooling skipped before run: ${candidateInfo.cooledDown}`
+  );
+}
+
 async function saveGroupContacts(client, chat) {
   if (!memory.savedContacts) memory.savedContacts = {};
 
@@ -1008,10 +1279,10 @@ async function requireGroupAdmin(msg) {
     return false;
   }
 
-  if (isTrustedOwner(activeSenderId(msg))) return true;
-  if (await isGroupAdmin(msg)) return true;
+  const groupId = chat.id && chat.id._serialized;
+  if (canUseGroupAdminCommands(msg, groupId)) return true;
 
-  await msg.reply('Group admin only command.');
+  await msg.reply('You are not allowed to use this bot admin command in this group.');
   return false;
 }
 
@@ -1170,6 +1441,7 @@ async function scraperDownload(kind, videoUrl, outputPath) {
 }
 
 async function ytDlpDownload(kind, videoUrl, outputPath) {
+  const ytDlpPath = process.env.YT_DLP_PATH || 'yt-dlp';
   const baseArgs = [
     '--no-playlist',
     '--no-warnings',
@@ -1210,10 +1482,17 @@ async function ytDlpDownload(kind, videoUrl, outputPath) {
         videoUrl
       ];
 
-  await execFileAsync('yt-dlp', args, {
-    timeout: kind === 'video' ? VIDEO_DOWNLOAD_TIMEOUT_MS : AUDIO_DOWNLOAD_TIMEOUT_MS,
-    maxBuffer: 1024 * 1024 * 4
-  });
+  try {
+    await execFileAsync(ytDlpPath, args, {
+      timeout: kind === 'video' ? VIDEO_DOWNLOAD_TIMEOUT_MS : AUDIO_DOWNLOAD_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024 * 4
+    });
+  } catch (e) {
+    if (e && e.code === 'ENOENT') {
+      throw new Error(`${ytDlpPath} is not installed or not in PATH`);
+    }
+    throw e;
+  }
 }
 
 function removeFile(file) {
@@ -2239,6 +2518,7 @@ async function start(name) {
     authStrategy: new LocalAuth({ clientId: name }),
     puppeteer: {
       headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     }
   });
@@ -2277,6 +2557,7 @@ async function start(name) {
       client.sendMessage(botId, sessionWelcomeText(welcomeName, name)).catch(e => logLine(`Session welcome failed (${name}): ${e.message}`));
     }
     startScheduleLoop(client, name);
+    startPlanReminderLoop(client, name);
     sendDueSchedules(client, name).catch(e => logLine(`Schedule startup check failed (${name}): ${e.message}`));
   });
 
@@ -2347,12 +2628,15 @@ async function start(name) {
 
       if (text === '.stopinvite') {
         if (isGroup) return msg.reply('Send .stopinvite privately to the bot.');
-        delete memory.inviteOptIns[sender];
+        memory.inviteOptIns[sender] = {
+          blocked: true,
+          at: Date.now()
+        };
         save(MEMORY_FILE, memory);
         return msg.reply('Invite permission removed. You will not receive invite links from this bot.');
       }
 
-      if (isCommand && !isSessionOwnerCommand) {
+      if (isCommand && !isSessionOwnerCommand && !(isGroup && isAllowedBotAdmin(sender, from))) {
         logLine(`[${name}] ignored command from non-owner ${sender}: ${text}`);
         return;
       }
@@ -2502,10 +2786,19 @@ ${MOOD_COMMANDS.join('\n')}
 *Contacts / Group Transfer*
 .savecontacts
 .listcontacts
+.invite 50
 .inviteall
+.invite status
+.invite reset
 .clearsaved
-.allowinvite
 .stopinvite
+
+*Bot Admin Access*
+.allowadmin @user
+.allowadmin global @user
+.removeadmin @user
+.removeadmin global @user
+.listadmins
 
 *Protection*
 .antilink on/off
@@ -2636,6 +2929,47 @@ ${MOOD_COMMANDS.join('\n')}
       if (text === '.owner list') {
         if (!(await requireOwnerAccess(msg))) return;
         return msg.reply(ownerlock.owners.length ? ownerlock.owners.map(tag).join('\n') : 'No trusted owners saved.');
+      }
+
+      if (text.startsWith('.allowadmin')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
+        const scope = botAdminScope(raw);
+        if (scope === 'group' && !isGroup) return msg.reply('Use .allowadmin @user inside a group, or .allowadmin global @user.');
+        const target = botAdminTargetFromInput(msg, raw.replace(/^\.allowadmin\s*/i, ''));
+        if (!target) return msg.reply('Use: .allowadmin @user or .allowadmin global @user');
+        const store = scope === 'global' ? ensureBotAdmins().global : groupBotAdmins(from);
+        store[target] = {
+          addedBy: sender,
+          at: Date.now()
+        };
+        save(MEMORY_FILE, memory);
+        return msg.reply(`${scope === 'global' ? 'Global' : 'Group'} bot admin allowed: *${await displayNameFor(client, target)}*`);
+      }
+
+      if (text.startsWith('.removeadmin')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
+        const scope = botAdminScope(raw);
+        if (scope === 'group' && !isGroup) return msg.reply('Use .removeadmin @user inside a group, or .removeadmin global @user.');
+        const target = botAdminTargetFromInput(msg, raw.replace(/^\.removeadmin\s*/i, ''));
+        if (!target) return msg.reply('Use: .removeadmin @user or .removeadmin global @user');
+        const store = scope === 'global' ? ensureBotAdmins().global : groupBotAdmins(from);
+        delete store[target];
+        save(MEMORY_FILE, memory);
+        return msg.reply(`${scope === 'global' ? 'Global' : 'Group'} bot admin removed: *${await displayNameFor(client, target)}*`);
+      }
+
+      if (text === '.listadmins') {
+        if (!(await requireOwnerAccess(msg))) return;
+        const botAdmins = ensureBotAdmins();
+        const globalAdmins = Object.keys(botAdmins.global);
+        const groupAdmins = isGroup ? Object.keys(groupBotAdmins(from)) : [];
+        return msg.reply(
+          `*Allowed Bot Admins*\n\n` +
+          `Global:\n${globalAdmins.length ? globalAdmins.map(tag).join('\n') : 'None'}\n\n` +
+          `This group:\n${groupAdmins.length ? groupAdmins.map(tag).join('\n') : 'None'}`
+        );
       }
 
       if (text === '.restart') {
@@ -3484,11 +3818,11 @@ ${MOOD_COMMANDS.join('\n')}
 
       if (text === '.listcontacts') {
         const total = savedContactList().length;
-        const optedIn = savedContactList().filter(item => memory.inviteOptIns[item.id]).length;
+        const optedOut = savedContactList().filter(item => memory.inviteOptIns[item.id] && memory.inviteOptIns[item.id].blocked).length;
         return msg.reply(
           `Saved contacts: ${total}\n` +
-          `Invite opted-in: ${optedIn}\n` +
-          `Use .savecontacts in a group to add members. Contacts must send .allowinvite privately before .inviteall can DM them.`
+          `Invite opted-out: ${optedOut}\n` +
+          `Use .invite 50 or .inviteall in the target group. The bot tries direct add first, then sends invite links to people who cannot be added.`
         );
       }
 
@@ -3500,58 +3834,32 @@ ${MOOD_COMMANDS.join('\n')}
         return msg.reply('Saved contacts cleared.');
       }
 
-      if (text === '.inviteall') {
+      if (text === '.invite status') {
         if (!(await requireGroupAdmin(msg))) return;
         const chat = await msg.getChat();
-        const code = await chat.getInviteCode();
-        const inviteLink = `https://chat.whatsapp.com/${code}`;
-        const botNumber = client.info && client.info.wid && client.info.wid._serialized;
-        const ownerSet = new Set([botNumber, ownerlock.primaryOwner, ...ownerlock.owners].filter(Boolean));
-        const contacts = savedContactList()
-          .filter(item => isContactId(item.id))
-          .filter(item => !ownerSet.has(item.id))
-          .filter(item => Boolean(memory.inviteOptIns[item.id]));
-
-        if (!contacts.length) {
-          return msg.reply(
-            `No opted-in saved contacts to invite.\n` +
-            `Saved contacts must first send .allowinvite privately to the bot.`
-          );
-        }
-
-        const maxPerRun = 25;
-        const delayMs = 8000;
-        const selected = contacts.slice(0, maxPerRun);
-        let sent = 0;
-        let failed = 0;
-
-        await msg.reply(`Sending invite link to ${selected.length}/${contacts.length} opted-in contacts with ${delayMs / 1000}s delay.`);
-
-        for (const item of selected) {
-          try {
-            const contact = await contactFor(client, item.id);
-            if (!contact) {
-              failed += 1;
-              continue;
-            }
-
-            await client.sendMessage(
-              item.id,
-              `Hi ${item.name || 'there'}, here is the group invite link:\n${inviteLink}`
-            );
-            sent += 1;
-            await sleep(delayMs);
-          } catch {
-            failed += 1;
-          }
-        }
-
+        const candidateInfo = inviteCandidateList(chat, INVITE_MAX_PER_RUN);
         return msg.reply(
-          `Invite run finished.\n` +
-          `Sent: ${sent}\n` +
-          `Failed/skipped: ${failed}\n` +
-          `Remaining opted-in not sent this run: ${Math.max(contacts.length - selected.length, 0)}`
+          `*Invite Status*\n\n` +
+          `Saved contacts: ${candidateInfo.totalSaved}\n` +
+          `Eligible now: ${candidateInfo.eligible}\n` +
+          `Already in group: ${candidateInfo.alreadyInGroup}\n` +
+          `Cooling down: ${candidateInfo.cooledDown}\n` +
+          `Opted out: ${candidateInfo.optedOut}\n` +
+          `Max per run: ${INVITE_MAX_PER_RUN}`
         );
+      }
+
+      if (text === '.invite reset') {
+        if (!(await requireOwnerAccess(msg))) return;
+        if (!isGroup) return msg.reply('Use .invite reset inside the group.');
+        if (memory.inviteHistory) delete memory.inviteHistory[from];
+        save(MEMORY_FILE, memory);
+        return msg.reply('Invite cooldown history cleared for this group.');
+      }
+
+      if (text === '.inviteall' || /^\.invite(?:\s+\d+)?$/.test(text)) {
+        const limit = parseInviteLimit(text);
+        return runInviteFlow(client, msg, limit);
       }
 
       if (text.startsWith('.setdesc ')) {
@@ -3823,6 +4131,7 @@ ${MOOD_COMMANDS.join('\n')}
           nextSession.leaseDays = parsed.days;
           nextSession.leasePaused = false;
           nextSession.createdBy = sender;
+          resetLeaseReminders(nextSession);
         } else if (parsed.unlimited) {
           nextSession.leaseStartedAt = now;
           nextSession.leaseExpiresAt = null;
@@ -3830,6 +4139,7 @@ ${MOOD_COMMANDS.join('\n')}
           nextSession.leaseDays = null;
           nextSession.leasePaused = false;
           nextSession.createdBy = sender;
+          resetLeaseReminders(nextSession);
         }
         save(SESSION_FILE, sessions);
         save(MEMORY_FILE, memory);
@@ -3858,6 +4168,7 @@ ${MOOD_COMMANDS.join('\n')}
           targetSession.leaseDays = null;
           targetSession.leasePaused = false;
           targetSession.updatedAt = now;
+          resetLeaseReminders(targetSession);
           save(MEMORY_FILE, memory);
           return msg.reply(`Session ${parsed.name} is now unlimited.\n${sessionLeaseLine(parsed.name)}`);
         }
@@ -3869,6 +4180,7 @@ ${MOOD_COMMANDS.join('\n')}
         targetSession.leaseDays = Number(targetSession.leaseDays || 0) + parsed.days;
         targetSession.leasePaused = false;
         targetSession.updatedAt = now;
+        resetLeaseReminders(targetSession);
         save(MEMORY_FILE, memory);
 
         return msg.reply(`Session ${parsed.name} extended by ${parsed.planLabel} (${formatDurationMs(parsed.durationMs)}).\n${sessionLeaseLine(parsed.name)}`);
@@ -3935,6 +4247,7 @@ ${MOOD_COMMANDS.join('\n')}
         targetSession.leasePaused = false;
         targetSession.cancelledAt = Date.now();
         targetSession.updatedAt = Date.now();
+        resetLeaseReminders(targetSession);
         save(MEMORY_FILE, memory);
         return msg.reply(`Session ${targetName} subscription cancelled. Premium access is now expired.`);
       }
