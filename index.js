@@ -20,6 +20,7 @@ const MEMORY_FILE = './memory.json';
 const SESSION_FILE = './sessions.json';
 const OWNERLOCK_FILE = './ownerlock.json';
 const SCHEDULE_FILE = './schedules.json';
+const AUTH_DATA_PATH = path.join(__dirname, '.wwebjs_auth');
 const YOUTUBE_COOKIES_FILE = path.join(__dirname, 'youtube-cookies.txt');
 const SCHEDULE_UTC_OFFSET_HOURS = 3;
 const SCHEDULE_TIMEZONE_LABEL = 'Africa/Nairobi';
@@ -113,6 +114,8 @@ const games = {};
 const lastSessionQr = {};
 const scheduleIntervals = {};
 const planReminderIntervals = {};
+const restartTimers = {};
+let shuttingDown = false;
 const processedMessages = new Set();
 const botDeletedMessageIds = new Set();
 
@@ -484,6 +487,47 @@ function stopScheduleLoop(sessionNameValue) {
   if (!scheduleIntervals[sessionNameValue]) return;
   clearInterval(scheduleIntervals[sessionNameValue]);
   delete scheduleIntervals[sessionNameValue];
+}
+
+function clearSessionRestart(name) {
+  if (!restartTimers[name]) return;
+  clearTimeout(restartTimers[name]);
+  delete restartTimers[name];
+}
+
+function scheduleSessionRestart(name, reason, delayMs = 15000) {
+  if (shuttingDown || restartTimers[name] || !sessions.sessions.includes(name)) return;
+  logLine(`[${name}] reconnect scheduled in ${Math.round(delayMs / 1000)}s: ${reason}`);
+  restartTimers[name] = setTimeout(async () => {
+    delete restartTimers[name];
+    if (shuttingDown || !sessions.sessions.includes(name)) return;
+    const current = clients[name];
+    if (current) {
+      await current.destroy().catch(e => logLine(`[${name}] destroy before reconnect failed: ${e.message}`));
+      delete clients[name];
+    }
+    start(name).catch(e => logLine(`[${name}] reconnect failed: ${e.message}`));
+  }, delayMs);
+}
+
+async function shutdownGracefully(code = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logLine(`Graceful shutdown started (${code}). Preserving WhatsApp auth sessions.`);
+
+  for (const name of Object.keys(restartTimers)) clearSessionRestart(name);
+  for (const name of Object.keys(scheduleIntervals)) stopScheduleLoop(name);
+  for (const name of Object.keys(planReminderIntervals)) {
+    clearInterval(planReminderIntervals[name]);
+    delete planReminderIntervals[name];
+  }
+
+  await Promise.all(Object.entries(clients).map(async ([name, client]) => {
+    await client.destroy().catch(e => logLine(`[${name}] graceful destroy failed: ${e.message}`));
+    delete clients[name];
+  }));
+
+  process.exit(code);
 }
 
 function isTrustedOwner(id) {
@@ -2673,16 +2717,26 @@ async function handleAntispam(client, msg, g) {
 }
 
 async function start(name) {
+  if (shuttingDown) return null;
   if (clients[name]) return clients[name];
 
   sessionSettings(name);
 
   const client = new Client({
-    authStrategy: new LocalAuth({ clientId: name }),
+    authStrategy: new LocalAuth({ clientId: name, dataPath: AUTH_DATA_PATH }),
+    takeoverOnConflict: true,
+    takeoverTimeoutMs: 30000,
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-extensions',
+        '--disable-background-networking'
+      ]
     }
   });
 
@@ -2698,7 +2752,17 @@ async function start(name) {
     logLine(`[${name}] pairing code: ${code}`);
   });
 
+  client.on('authenticated', () => {
+    clearSessionRestart(name);
+    logLine(`[${name}] AUTHENTICATED`);
+  });
+
+  client.on('auth_failure', message => {
+    logLine(`[${name}] AUTH FAILURE: ${message || 'unknown reason'}. Auth files were kept; use .session qr ${name} or reset only this session if needed.`);
+  });
+
   client.on('ready', () => {
+    clearSessionRestart(name);
     const botId = client.info && client.info.wid && client.info.wid._serialized;
     const session = sessionSettings(name);
     const previousBotId = session.botId;
@@ -2722,6 +2786,18 @@ async function start(name) {
     startScheduleLoop(client, name);
     startPlanReminderLoop(client, name);
     sendDueSchedules(client, name).catch(e => logLine(`Schedule startup check failed (${name}): ${e.message}`));
+  });
+
+  client.on('disconnected', reason => {
+    logLine(`[${name}] DISCONNECTED: ${reason || 'unknown'}`);
+    stopScheduleLoop(name);
+    if (clients[name] === client) delete clients[name];
+    client.destroy().catch(e => logLine(`[${name}] disconnected cleanup failed: ${e.message}`));
+    if (String(reason || '').toUpperCase() !== 'LOGOUT') {
+      scheduleSessionRestart(name, reason || 'disconnected');
+    } else {
+      logLine(`[${name}] WhatsApp reported LOGOUT. This session needs manual relink.`);
+    }
   });
 
   client.on('message', async msg => {
@@ -3172,13 +3248,15 @@ async function start(name) {
       if (text === '.restart') {
         if (!(await requireOwnerAccess(msg))) return;
         await msg.reply('Restarting. Use PM2/Task Scheduler so the process comes back automatically.');
-        process.exit(2);
+        setTimeout(() => shutdownGracefully(2), 500);
+        return;
       }
 
       if (text === '.shutdown') {
         if (!(await requireOwnerAccess(msg))) return;
         await msg.reply('Shutting down.');
-        process.exit(0);
+        setTimeout(() => shutdownGracefully(0), 500);
+        return;
       }
 
       if (text === '.backup') {
@@ -4727,4 +4805,9 @@ async function start(name) {
   return client;
 }
 
-sessions.sessions.forEach(start);
+process.on('SIGINT', () => shutdownGracefully(0));
+process.on('SIGTERM', () => shutdownGracefully(0));
+
+sessions.sessions.forEach(name => {
+  start(name).catch(e => logLine(`[${name}] startup failed: ${e.message}`));
+});
