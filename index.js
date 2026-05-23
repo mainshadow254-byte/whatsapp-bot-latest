@@ -548,6 +548,87 @@ function tag(id) {
   return `@${String(id).split('@')[0]}`;
 }
 
+const WELCOME_JOKES = [
+  "😂 Hey @username, I told you people to come quickly and see who has joined… now laugh before they start asking for notes!",
+  "🤣 Everyone pause! @username has entered like WiFi after bundles are finished.",
+  "😂 Hey @username, welcome! We almost started a search party for you.",
+  "😭🤣 Look who finally joined… @username came late like school fees balance.",
+  "😂 @username just landed in {groupName}. Please behave, important visitor has arrived.",
+  "🤣 Hey @username, you entered this group like exam results… everyone is now alert.",
+  "😂 Somebody clap! @username has joined {groupName} without even paying entrance fee.",
+  "🤣 @username is here! Hide the snacks before they ask for revision materials and tea.",
+  "😂 Welcome @username, you joined at the right time… we were just about to become serious.",
+  "😭😂 @username has joined. Now the group IQ has increased by 0.5 percent.",
+  "🤣 Hey @username, I told them a legend was coming… they thought I was joking.",
+  "😂 @username came in quietly like a student entering class after break time.",
+  "🤣 Breaking news: @username has joined {groupName}. More updates after this welcome message.",
+  "😂 Welcome @username, don’t fear. We only bite during exams.",
+  "😭🤣 @username joined and suddenly the group looks more academic.",
+  "😂 Hey @username, you finally found us. Google Maps must be proud.",
+  "🤣 @username is here! Someone bring notes, assignments, and emotional support.",
+  "😂 Welcome @username, this group is like school but with less punishment.",
+  "🤣 Hey @username, you joined {groupName}. Your brain has officially accepted the terms and conditions.",
+  "😂 @username has arrived. Please no noise, future scholar detected.",
+  "😂 Hey @username, I told you people to come quickly and see who just joined… now look at you arriving late like a government project 😭🤣",
+  "🤣 Hey @username, the group became quiet immediately you joined… these people fear new members more than exams 😭😂",
+  "😂 Hey @username, welcome to {groupName}. Even the admin sat properly after seeing you join 😭🤣",
+  "🤣 @username finally joined! Somebody hide unfinished assignments before questions start flying 😂😭",
+  "😂 Hey @username, don’t worry… here we only judge people by how fast they send notes 😭🤣",
+  "🤣 I told everyone a future billionaire was joining today… then @username entered carrying only vibes 😭😂",
+  "😂 @username joined and suddenly everyone remembers they’re students again 😭🤣",
+  "🤣 Hey @username, you entered this group like school WiFi… everybody suddenly became active 😭😂",
+  "😂 @username just joined {groupName}. Attendance has officially improved 😭🤣",
+  "🤣 Hey @username, welcome. The only requirement here is surviving exams and random stress 😂😭",
+  "😂 I told these people to welcome @username nicely but they’re just staring like villagers seeing electricity for the first time 😭🤣",
+  "🤣 @username joined and now the group looks expensive 😂😭",
+  "😂 Hey @username, don’t panic. The confusion in this group is completely normal 😭🤣",
+  "🤣 Welcome @username. Here we motivate each other academically… sometimes 😭😂",
+  "😂 @username finally arrived. We almost reported you missing to Google Maps 😭🤣",
+  "🤣 Hey @username, welcome to {groupName}. Your stress levels are now academically certified 😂😭",
+  "😂 @username joined and immediately the group started pretending to be productive 😭🤣",
+  "🤣 Welcome @username. Please ignore the chaos, even we don’t understand what happens here 😂😭",
+  "😂 Hey @username, I told them a legend was coming but nobody believed me until now 😭🤣",
+  "🤣 @username has entered the chat. Somebody bring tea and past papers immediately 😂😭",
+  "😂 Welcome @username. In this group we cry, laugh, revise, and repeat 😭🤣",
+  "🤣 Hey @username, congratulations. You have successfully upgraded your academic problems 😂😭",
+  "😂 @username joined and now everybody is online like free bundles were announced 😭🤣",
+  "🤣 Welcome @username. The pressure here is free of charge 😂😭",
+  "😂 Hey @username, now that you’re here the group officially has one more future millionaire 😭🤣"
+];
+
+const GOODBYE_JOKES = [
+  "😂 @username left the group… now who will view messages at 2AM without replying 😭🤣",
+  "🤣 Breaking news: @username has escaped from {groupName}. Authorities are still investigating 😭😂",
+  "😂 @username left quietly like a student sneaking out after assembly 😭🤣",
+  "🤣 @username has left the group. Even the admin is pretending not to care 😂😭",
+  "😂 One member down. The electricity bill in {groupName} has reduced 😭🤣",
+  "🤣 @username left the group like bundles after opening TikTok 😭😂",
+  "😂 @username disappeared faster than motivation during exams 😭🤣",
+  "🤣 @username has left. Somebody check if the pressure became too much 😂😭",
+  "😂 @username left {groupName}. Now who will ignore assignments professionally 😭🤣",
+  "🤣 We tried to stop @username from leaving but the loading circle was faster 😭😂",
+  "😂 @username left the group. Peace levels have increased by 2% 😭🤣",
+  "🤣 @username escaped before seeing the next CAT timetable 😭😂",
+  "😂 @username has left. Even WhatsApp asked 'are you sure?' 😭🤣",
+  "🤣 Another soldier has fallen. Goodbye @username 😂😭",
+  "😂 @username left like salary after paying rent 😭🤣",
+  "🤣 @username has exited the chat. Group confusion remains unchanged 😂😭",
+  "😂 @username left suddenly… even Google Maps lost track 😭🤣",
+  "🤣 @username saw the academic pressure and said 'I’m fighting for my life' 😭😂",
+  "😂 @username has left {groupName}. The drama department is now hiring 😭🤣",
+  "🤣 We were about to become successful then @username left 😭😂",
+  "😂 @username left the group like someone avoiding contribution money 😭🤣",
+  "🤣 @username rage quit the group before exams could humble everyone 😭😂",
+  "😂 @username has left. The remaining members will continue suffering together 😭🤣",
+  "🤣 @username left so fast even the goodbye message arrived late 😭😂",
+  "😂 @username left {groupName}. The vibes will never recover 😭🤣",
+  "🤣 Looks like @username finally found peace outside this group 😂😭",
+  "😂 @username left like a politician after making promises 😭🤣",
+  "🤣 @username has departed. Thank you for using {groupName} airlines 😂😭",
+  "😂 @username left without submitting an exit form 😭🤣",
+  "🤣 @username has left the battlefield. Remaining students continue fighting 😭😂"
+];
+
 function hostingPromoText() {
   return `\n\n${HOSTING_PROMO}`;
 }
@@ -613,6 +694,8 @@ function group(id) {
   if (!g.goodbye && g.bye) g.goodbye = g.bye;
   if (!g.warnLimit) g.warnLimit = 3;
   if (!g.muted) g.muted = {};
+  if (typeof g.lastWelcomeJoke !== 'string') g.lastWelcomeJoke = null;
+  if (typeof g.lastGoodbyeJoke !== 'string') g.lastGoodbyeJoke = null;
   return g;
 }
 
@@ -659,6 +742,10 @@ function normalizeNumber(raw) {
 
 function firstMention(msg) {
   return msg.mentionedIds && msg.mentionedIds.length ? msg.mentionedIds[0] : null;
+}
+
+function uniqueIds(ids) {
+  return [...new Set(ids.filter(Boolean))];
 }
 
 function sessionName(raw) {
@@ -1298,6 +1385,23 @@ async function targetFromMentionOrReply(msg) {
   return null;
 }
 
+async function targetsFromMentionsReplyOrNumbers(msg, rawValue = '') {
+  const targets = [];
+  if (Array.isArray(msg.mentionedIds)) targets.push(...msg.mentionedIds);
+
+  if (!targets.length && msg.hasQuotedMsg) {
+    const quoted = await msg.getQuotedMessage();
+    targets.push(senderId(quoted));
+  }
+
+  if (!targets.length) {
+    const numbers = String(rawValue || '').match(/\+?\d[\d\s-]{5,}\d/g) || [];
+    targets.push(...numbers.map(normalizeNumber));
+  }
+
+  return uniqueIds(targets);
+}
+
 function getWarns(groupId, userId) {
   if (!memory.warns) memory.warns = {};
   if (!memory.warns[groupId]) memory.warns[groupId] = {};
@@ -1537,6 +1641,65 @@ async function sendTextOrImage(client, chatId, text, mentions = []) {
   }
 
   await client.sendMessage(chatId, text, { mentions });
+}
+
+function fillMemberTemplate(template, memberId, username, groupName, description) {
+  const mention = tag(memberId);
+  return String(template || '')
+    .replace(/@username/g, mention)
+    .replace(/@user/g, mention)
+    .replace(/{user}/g, mention)
+    .replace(/{name}/g, username)
+    .replace(/{username}/g, username)
+    .replace(/{groupName}/g, groupName)
+    .replace(/{description}/g, description);
+}
+
+function rotatingTemplate(settings, templates, memoryKey) {
+  if (!templates.length) return '';
+  if (templates.length === 1) return templates[0];
+
+  const previous = settings[memoryKey];
+  const choices = templates.filter(template => template !== previous);
+  const picked = choices[Math.floor(Math.random() * choices.length)];
+  settings[memoryKey] = picked;
+  save(MEMORY_FILE, memory);
+  return picked;
+}
+
+function buildWelcomeMessage(settings, memberId, username, groupName, description) {
+  const desc = String(description || '').trim() || 'No group description has been set yet.';
+
+  if (settings.welcome) {
+    return fillMemberTemplate(settings.welcome, memberId, username, groupName, desc);
+  }
+
+  const joke = fillMemberTemplate(
+    rotatingTemplate(settings, WELCOME_JOKES, 'lastWelcomeJoke'),
+    memberId,
+    username,
+    groupName,
+    desc
+  );
+
+  return `${joke}
+
+${desc}
+
+Welcome to *${groupName}* 🎉`;
+}
+
+function buildGoodbyeMessage(settings, memberId, username, groupName) {
+  const custom = settings.goodbye || settings.bye;
+  if (custom) return fillMemberTemplate(custom, memberId, username, groupName, '');
+
+  return fillMemberTemplate(
+    rotatingTemplate(settings, GOODBYE_JOKES, 'lastGoodbyeJoke'),
+    memberId,
+    username,
+    groupName,
+    ''
+  );
 }
 
 function runtime() {
@@ -3720,12 +3883,40 @@ async function start(name) {
       if (text.startsWith('.kick')) {
         if (!(await requireGroupAdmin(msg))) return;
 
-        const target = await targetFromMentionOrReply(msg);
-        if (!target) return msg.reply('Mention or reply to the user you want to kick.');
+        const targets = await targetsFromMentionsReplyOrNumbers(msg, raw.slice(5));
+        if (!targets.length) return msg.reply('Mention, reply to, or type the number of the user you want to kick.');
 
         const chat = await msg.getChat();
-        await chat.removeParticipants([target]);
-        return msg.reply('User removed.');
+        const botId = client.info && client.info.wid && client.info.wid._serialized;
+        const sender = activeSenderId(msg);
+        const members = new Set((chat.participants || []).map(p => p.id && p.id._serialized).filter(Boolean));
+        const removable = targets.filter(target => target !== botId && target !== sender && members.has(target));
+        const skipped = targets.length - removable.length;
+        if (!removable.length) return msg.reply('I could not find removable group members in your selection.');
+
+        const removed = [];
+        const failed = [];
+        try {
+          await chat.removeParticipants(removable);
+          removed.push(...removable);
+        } catch (e) {
+          for (const target of removable) {
+            try {
+              await chat.removeParticipants([target]);
+              removed.push(target);
+              await sleep(600);
+            } catch (err) {
+              failed.push(target);
+            }
+          }
+        }
+
+        if (removed.length && failed.length) {
+          return msg.reply(`Removed ${removed.length} user(s). Failed ${failed.length}. Skipped ${skipped}. Failed users may be admins, already gone, or WhatsApp blocked the action.`);
+        }
+
+        if (removed.length) return msg.reply(`Removed ${removed.length} user(s).${skipped ? ` Skipped ${skipped}.` : ''}`);
+        return msg.reply('Could not remove the selected user(s). They may be admins, already gone, or WhatsApp blocked the action.');
       }
 
       if (text.startsWith('.mute ')) {
@@ -4496,14 +4687,12 @@ async function start(name) {
         return;
       }
       if (!settings.welcomeOn) return;
-      const desc = chat.description || '';
-      const text = settings.welcome ||
-        `Welcome *${username}*\n\n${desc}\n\nThank you for joining, ${username}.`;
+      const text = buildWelcomeMessage(settings, id, username, chat.name || 'this group', chat.description);
 
       await sendTextOrImage(
         client,
         chat.id._serialized,
-        text.replace(/@user/g, username),
+        text,
         contact ? [contact] : []
       );
     } catch {}
@@ -4522,9 +4711,9 @@ async function start(name) {
       const username = contact
         ? (contact.pushname || contact.name || contact.shortName || contact.verifiedName || tag(id))
         : tag(id);
-      const text = settings.goodbye || settings.bye || `Goodbye *${username}*`;
+      const text = buildGoodbyeMessage(settings, id, username, chat.name || 'this group');
 
-      await client.sendMessage(chat.id._serialized, text.replace(/@user/g, username), {
+      await client.sendMessage(chat.id._serialized, text, {
         mentions: contact ? [contact] : []
       });
     } catch {}
