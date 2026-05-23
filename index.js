@@ -3015,6 +3015,10 @@ async function start(name) {
 │ ✧ .group info
 │ ✧ .group link
 │ ✧ .revoke link
+│ ✧ .welcome on/off
+│ ✧ .setwelcome text
+│ ✧ .goodbye on/off
+│ ✧ .setbye text
 │ ✧ .setname text
 │ ✧ .setdesc text
 │ ✧ .setpp
