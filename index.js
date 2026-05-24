@@ -1192,14 +1192,16 @@ async function identityLabelFor(client, id) {
   for (const candidate of candidates) {
     const contact = await client.getContactById(candidate).catch(() => null);
     if (!contact) continue;
-    const name = contact.name || contact.pushname || contact.shortName || contact.verifiedName;
+    const savedName = contact.name || contact.shortName || contact.verifiedName;
+    const profileName = contact.pushname;
     const number = contact.number || (cleanPhoneId(candidate) || '').replace('@c.us', '');
-    if (name && number) return `${name} (+${number})`;
-    if (name) return name;
-    if (number) return `+${number}`;
+    if (savedName) return savedName;
+    if (number && profileName) return `Unsaved contact +${number} (${profileName})`;
+    if (number) return `Unsaved contact +${number}`;
+    if (profileName) return `Unsaved contact (${profileName})`;
   }
 
-  return phoneLabel(cleaned || id);
+  return `Unsaved contact ${phoneLabel(cleaned || id)}`;
 }
 
 function rememberStatusMessage(msg) {
