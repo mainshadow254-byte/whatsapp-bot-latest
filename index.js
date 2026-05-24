@@ -1922,13 +1922,13 @@ async function sendTextOrImage(client, chatId, text, mentions = []) {
 }
 
 function fillMemberTemplate(template, memberId, username, groupName, description) {
-  const mention = tag(memberId);
+  const display = String(username || '').trim() || (isContactId(memberId) ? tag(memberId) : 'new member');
   return String(template || '')
-    .replace(/@username/g, mention)
-    .replace(/@user/g, mention)
-    .replace(/{user}/g, mention)
-    .replace(/{name}/g, username)
-    .replace(/{username}/g, username)
+    .replace(/@username/g, display)
+    .replace(/@user/g, display)
+    .replace(/{user}/g, display)
+    .replace(/{name}/g, display)
+    .replace(/{username}/g, display)
     .replace(/{groupName}/g, groupName)
     .replace(/{description}/g, description);
 }
@@ -5137,9 +5137,7 @@ async function start(name) {
       if (isKnownBotId(id)) return;
       const settings = group(chat.id._serialized);
       const contact = await contactFor(client, id);
-      const username = contact
-        ? (contact.pushname || contact.name || contact.shortName || contact.verifiedName || tag(id))
-        : tag(id);
+      const username = await identityLabelFor(client, id);
       if (settings.antiforeign && !isKenyanNumber(id)) {
         await chat.removeParticipants([id]).catch(() => {});
         await client.sendMessage(
@@ -5171,9 +5169,7 @@ async function start(name) {
       const settings = group(chat.id._serialized);
       if (!settings.goodbyeOn) return;
       const contact = await contactFor(client, id);
-      const username = contact
-        ? (contact.pushname || contact.name || contact.shortName || contact.verifiedName || tag(id))
-        : tag(id);
+      const username = await identityLabelFor(client, id);
       const text = buildGoodbyeMessage(settings, id, username, chat.name || 'this group');
 
       await client.sendMessage(chat.id._serialized, text, {
