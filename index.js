@@ -1180,28 +1180,45 @@ function statusSenderId(msg) {
 }
 
 function phoneLabel(id) {
-  const cleaned = cleanPhoneId(id);
+  const cleaned = String(id || '').endsWith('@lid') ? null : cleanPhoneId(id);
   const number = cleaned ? cleaned.replace('@c.us', '') : String(id || '').replace(/\D/g, '');
-  return number ? `+${number}` : 'unknown number';
+  return number && !String(id || '').endsWith('@lid') ? `+${number}` : 'phone hidden by WhatsApp';
 }
 
-async function identityLabelFor(client, id) {
-  const cleaned = cleanPhoneId(id);
-  const candidates = [...new Set([id, cleaned].filter(Boolean))];
+async function realPhoneIdFor(client, id) {
+  if (!id) return null;
+
+  const directContact = await contactFor(client, id);
+  const directNumber = contactNumberId(directContact);
+  if (directNumber) return directNumber;
+
+  const lidNumber = await lidPhoneId(client, id);
+  if (lidNumber) return lidNumber;
+
+  if (String(id).endsWith('@lid')) return null;
+  return cleanPhoneId(id);
+}
+
+async function identityLabelFor(client, id, options = {}) {
+  const realPhoneId = await realPhoneIdFor(client, id);
+  const candidates = [...new Set([id, realPhoneId].filter(Boolean))];
+  let profileName = null;
 
   for (const candidate of candidates) {
     const contact = await client.getContactById(candidate).catch(() => null);
     if (!contact) continue;
     const savedName = contact.name || contact.shortName || contact.verifiedName;
-    const profileName = contact.pushname;
-    const number = contact.number || (cleanPhoneId(candidate) || '').replace('@c.us', '');
+    profileName = profileName || contact.pushname;
+    const number = (realPhoneId || contactNumberId(contact) || '').replace('@c.us', '');
+    if (savedName && options.includePhoneForSaved && number) return `${savedName} (+${number})`;
     if (savedName) return savedName;
     if (number && profileName) return `Unsaved contact +${number} (${profileName})`;
     if (number) return `Unsaved contact +${number}`;
     if (profileName) return `Unsaved contact (${profileName})`;
   }
 
-  return `Unsaved contact ${phoneLabel(cleaned || id)}`;
+  const phone = phoneLabel(realPhoneId || id);
+  return profileName ? `Unsaved contact ${phone} (${profileName})` : `Unsaved contact ${phone}`;
 }
 
 function rememberStatusMessage(msg) {
@@ -1304,7 +1321,7 @@ async function saveStatusMediaForCommand(client, msg, raw) {
   const sourceId = source.id && source.id._serialized;
   const cachedStatus = sourceId ? statusMessageCache[sourceId] : null;
   const ownerId = cachedStatus ? cachedStatus.sender : statusSenderId(source);
-  const owner = await identityLabelFor(client, ownerId);
+  const owner = await identityLabelFor(client, ownerId, { includePhoneForSaved: true });
   media.filename = media.filename || `status-${Date.now()}.${mediaExt(media)}`;
   return msg.reply(media, undefined, { caption: `Saved status from ${owner}` });
 }
