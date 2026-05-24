@@ -41,6 +41,7 @@ const INVITE_DIRECT_BATCH_SIZE = 3;
 const INVITE_DIRECT_BATCH_DELAY_MS = 45000;
 const INVITE_DM_DELAY_MS = 15000;
 const INVITE_COOLDOWN_MS = 72 * HOUR_MS;
+const SESSION_BROADCAST_DELAY_MS = 2500;
 const PLAN_REMINDER_INTERVAL_MS = HOUR_MS;
 const PLAN_REMINDER_THRESHOLDS = [
   { key: '3d', label: '3 days', ms: 3 * DAY_MS },
@@ -1020,6 +1021,34 @@ function parseSessionLeaseInput(rawValue) {
     unlimited: plan.unlimited,
     planLabel: plan.label
   };
+}
+
+function parseSessionDuration(rawValue) {
+  const plan = parsePlanDays(rawValue);
+  return {
+    durationMs: Number.isInteger(plan.ms) && plan.ms > 0 ? plan.ms : null,
+    days: Number.isInteger(plan.days) && plan.days > 0 ? plan.days : null,
+    planLabel: plan.label
+  };
+}
+
+function linkedCustomerSessions() {
+  return sessions.sessions
+    .filter(sessionNameItem => sessionNameItem !== 'main')
+    .map(sessionNameItem => [sessionNameItem, sessionSettings(sessionNameItem)])
+    .filter(([, item]) => Boolean(item && item.botId));
+}
+
+function extendSessionDuration(session, durationMs, days) {
+  const now = Date.now();
+  const baseExpiry = Math.max(Number(session.leaseExpiresAt || now), now);
+  session.leaseStartedAt = session.leaseStartedAt || now;
+  session.leaseExpiresAt = baseExpiry + durationMs;
+  session.leaseMs = Number(session.leaseMs || 0) + durationMs;
+  session.leaseDays = Number(session.leaseDays || 0) + days;
+  session.leasePaused = false;
+  session.updatedAt = now;
+  resetLeaseReminders(session);
 }
 
 function safeFileName(name) {
@@ -3141,6 +3170,8 @@ async function start(name) {
 │ ☁️ .session add name 12h/7d/10w/3m/unlimited
 │ ☁️ .session status name
 │ ☁️ .session extend name 12h/7d/10w/3m
+│ ☁️ .session extendall 12h/7d/10w/3m
+│ ☁️ .session broadcast message
 │ ☁️ .session reduce name 12h/7d/10w/3m
 │ ☁️ .session renew name unlimited
 │ ☁️ .session pause name
@@ -4476,17 +4507,62 @@ async function start(name) {
           return msg.reply(`Session ${parsed.name} is now unlimited.\n${sessionLeaseLine(parsed.name)}`);
         }
 
-        const baseExpiry = Math.max(Number(targetSession.leaseExpiresAt || now), now);
-        targetSession.leaseStartedAt = targetSession.leaseStartedAt || now;
-        targetSession.leaseExpiresAt = baseExpiry + parsed.durationMs;
-        targetSession.leaseMs = Number(targetSession.leaseMs || 0) + parsed.durationMs;
-        targetSession.leaseDays = Number(targetSession.leaseDays || 0) + parsed.days;
-        targetSession.leasePaused = false;
-        targetSession.updatedAt = now;
-        resetLeaseReminders(targetSession);
+        extendSessionDuration(targetSession, parsed.durationMs, parsed.days);
         save(MEMORY_FILE, memory);
 
         return msg.reply(`Session ${parsed.name} extended by ${parsed.planLabel} (${formatDurationMs(parsed.durationMs)}).\n${sessionLeaseLine(parsed.name)}`);
+      }
+
+      if (text.startsWith('.session extendall ') || text.startsWith('.session addtimeall ')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
+        const durationText = raw.replace(/^\.session\s+(extendall|addtimeall)\s+/i, '').trim();
+        const parsed = parseSessionDuration(durationText);
+        if (!parsed.durationMs) return msg.reply('Use: .session extendall 1d, 12h, 7d, 10w, or 3m');
+
+        const linkedTargets = linkedCustomerSessions();
+        const targets = linkedTargets.filter(([sessionNameItem]) => {
+          const stats = sessionLeaseStats(sessionNameItem);
+          return stats && !stats.unlimited;
+        });
+        if (!targets.length) return msg.reply('No linked limited customer sessions found.');
+
+        for (const [, targetSession] of targets) {
+          extendSessionDuration(targetSession, parsed.durationMs, parsed.days);
+        }
+        save(MEMORY_FILE, memory);
+
+        return msg.reply(
+          `Extended ${targets.length} linked customer session(s) by ${parsed.planLabel} (${formatDurationMs(parsed.durationMs)}).\n` +
+          `Skipped ${linkedTargets.length - targets.length} unlimited session(s).`
+        );
+      }
+
+      if (text.startsWith('.session broadcast ')) {
+        if (!(await requireOwnerAccess(msg))) return;
+        if (!(await requirePrimaryOwnerAccess(msg, botId, name))) return;
+        const notice = raw.replace(/^\.session\s+broadcast\s+/i, '').trim();
+        if (!notice) return msg.reply('Use: .session broadcast maintenance message');
+
+        const targets = linkedCustomerSessions();
+        if (!targets.length) return msg.reply('No linked customer sessions found.');
+
+        await msg.reply(`Broadcast started to ${targets.length} linked customer session(s).`);
+        let sent = 0;
+        let failed = 0;
+
+        for (const [sessionNameItem, targetSession] of targets) {
+          try {
+            await client.sendMessage(targetSession.botId, notice);
+            sent++;
+          } catch (e) {
+            failed++;
+            logLine(`Session broadcast failed (${sessionNameItem}/${targetSession.botId}): ${e.message}`);
+          }
+          await sleep(SESSION_BROADCAST_DELAY_MS);
+        }
+
+        return msg.reply(`Broadcast complete. Sent: ${sent}. Failed: ${failed}.`);
       }
 
       if (text.startsWith('.session reduce ')) {
