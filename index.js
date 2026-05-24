@@ -42,6 +42,9 @@ const INVITE_DIRECT_BATCH_DELAY_MS = 45000;
 const INVITE_DM_DELAY_MS = 15000;
 const INVITE_COOLDOWN_MS = 72 * HOUR_MS;
 const SESSION_BROADCAST_DELAY_MS = 2500;
+const DEFAULT_GHOST_STATUS_INTERVAL_MS = 2 * HOUR_MS;
+const MIN_GHOST_STATUS_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_STATUS_CACHE = 200;
 const PLAN_REMINDER_INTERVAL_MS = HOUR_MS;
 const PLAN_REMINDER_THRESHOLDS = [
   { key: '3d', label: '3 days', ms: 3 * DAY_MS },
@@ -115,7 +118,9 @@ const games = {};
 const lastSessionQr = {};
 const scheduleIntervals = {};
 const planReminderIntervals = {};
+const ghostStatusIntervals = {};
 const restartTimers = {};
+const statusMessageCache = {};
 let shuttingDown = false;
 const processedMessages = new Set();
 const botDeletedMessageIds = new Set();
@@ -518,6 +523,7 @@ async function shutdownGracefully(code = 0) {
 
   for (const name of Object.keys(restartTimers)) clearSessionRestart(name);
   for (const name of Object.keys(scheduleIntervals)) stopScheduleLoop(name);
+  for (const name of Object.keys(ghostStatusIntervals)) stopGhostStatusLoop(name);
   for (const name of Object.keys(planReminderIntervals)) {
     clearInterval(planReminderIntervals[name]);
     delete planReminderIntervals[name];
@@ -757,6 +763,12 @@ function sessionSettings(name) {
       autoreactEmoji: '💗',
       statusview: false,
       statuslike: false,
+      ghostStatus: false,
+      ghostStatusIntervalMs: DEFAULT_GHOST_STATUS_INTERVAL_MS,
+      ghostLastSeenMode: 'off',
+      ghostLastSeenOffsetMs: 0,
+      ghostLastSeenText: null,
+      antideleteInbox: false,
       statusReact: '💗',
       online: false,
       autostatus: false,
@@ -776,6 +788,17 @@ function sessionSettings(name) {
   if (!memory.sessions[name].mood) memory.sessions[name].mood = 'normal';
   if (!memory.sessions[name].autoreactEmoji) memory.sessions[name].autoreactEmoji = '💗';
   if (!memory.sessions[name].statusReact) memory.sessions[name].statusReact = '💗';
+  if (typeof memory.sessions[name].ghostStatus !== 'boolean') memory.sessions[name].ghostStatus = false;
+  if (!Number.isFinite(Number(memory.sessions[name].ghostStatusIntervalMs))) {
+    memory.sessions[name].ghostStatusIntervalMs = DEFAULT_GHOST_STATUS_INTERVAL_MS;
+  }
+  memory.sessions[name].ghostStatusIntervalMs = Math.max(
+    MIN_GHOST_STATUS_INTERVAL_MS,
+    Number(memory.sessions[name].ghostStatusIntervalMs)
+  );
+  if (!memory.sessions[name].ghostLastSeenMode) memory.sessions[name].ghostLastSeenMode = 'off';
+  if (!Number.isFinite(Number(memory.sessions[name].ghostLastSeenOffsetMs))) memory.sessions[name].ghostLastSeenOffsetMs = 0;
+  if (typeof memory.sessions[name].antideleteInbox !== 'boolean') memory.sessions[name].antideleteInbox = false;
   if (!memory.sessions[name].createdAt) memory.sessions[name].createdAt = Date.now();
   return memory.sessions[name];
 }
@@ -1119,6 +1142,136 @@ function parseDuration(value) {
   const unit = match[2].toLowerCase();
   const multipliers = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
   return amount * multipliers[unit];
+}
+
+function formatDurationShort(ms) {
+  const value = Number(ms || 0);
+  if (value % DAY_MS === 0) return `${value / DAY_MS}d`;
+  if (value % HOUR_MS === 0) return `${value / HOUR_MS}h`;
+  if (value % 60000 === 0) return `${value / 60000}m`;
+  return `${Math.round(value / 1000)}s`;
+}
+
+function formatLocalDateTime(ms) {
+  return new Date(ms).toLocaleString('en-KE', {
+    timeZone: SCHEDULE_TIMEZONE_LABEL,
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+function statusSenderId(msg) {
+  return (
+    msg.author ||
+    (msg._data && (msg._data.author || msg._data.participant || msg._data.sender)) ||
+    activeSenderId(msg) ||
+    'status@broadcast'
+  );
+}
+
+function rememberStatusMessage(msg) {
+  if (msg.from !== 'status@broadcast' && msg.to !== 'status@broadcast') return;
+  const id = msg.id && msg.id._serialized;
+  if (!id) return;
+
+  statusMessageCache[id] = {
+    id,
+    msg,
+    sender: statusSenderId(msg),
+    hasMedia: Boolean(msg.hasMedia),
+    type: msg.type || 'status',
+    at: Date.now()
+  };
+
+  const keys = Object.keys(statusMessageCache);
+  while (keys.length > MAX_STATUS_CACHE) {
+    delete statusMessageCache[keys.shift()];
+  }
+}
+
+function latestStatusEntry(target = null) {
+  const wanted = target ? cleanPhoneId(target) : null;
+  return Object.values(statusMessageCache)
+    .filter(entry => entry && entry.hasMedia && (!wanted || cleanPhoneId(entry.sender) === wanted))
+    .sort((a, b) => b.at - a.at)[0] || null;
+}
+
+function ghostLastSeenText(session) {
+  if (!session || session.ghostLastSeenMode === 'off') return null;
+  const at = session.ghostLastSeenMode === 'now'
+    ? Date.now()
+    : Date.now() + Number(session.ghostLastSeenOffsetMs || 0);
+  return `Ghost last seen: ${formatLocalDateTime(at)}`;
+}
+
+async function applyGhostLastSeenStatus(client, session, sessionNameValue) {
+  const text = ghostLastSeenText(session);
+  if (!text) return;
+  session.ghostLastSeenText = text;
+  await client.setStatus(text).catch(e => {
+    logLine(`Ghost last-seen status failed (${sessionNameValue}): ${e.message}`);
+  });
+}
+
+function stopGhostStatusLoop(name) {
+  if (!ghostStatusIntervals[name]) return;
+  clearInterval(ghostStatusIntervals[name]);
+  delete ghostStatusIntervals[name];
+}
+
+async function runGhostStatusView(client, name) {
+  const session = sessionSettings(name);
+  if (!session.ghostStatus) return;
+  if (client.sendSeen) {
+    await client.sendSeen('status@broadcast').catch(e => {
+      logLine(`Ghost status view failed (${name}): ${e.message}`);
+    });
+  }
+  logLine(`[${name}] ghost status view cycle ran`);
+}
+
+function startGhostStatusLoop(client, name) {
+  stopGhostStatusLoop(name);
+  const session = sessionSettings(name);
+  if (!session.ghostStatus) return;
+  const intervalMs = Math.max(MIN_GHOST_STATUS_INTERVAL_MS, Number(session.ghostStatusIntervalMs || DEFAULT_GHOST_STATUS_INTERVAL_MS));
+  ghostStatusIntervals[name] = setInterval(() => {
+    runGhostStatusView(client, name).catch(e => logLine(`Ghost status loop failed (${name}): ${e.message}`));
+  }, intervalMs);
+  runGhostStatusView(client, name).catch(e => logLine(`Ghost status first run failed (${name}): ${e.message}`));
+}
+
+async function saveStatusMediaForCommand(client, msg, raw) {
+  let source = null;
+  if (msg.hasQuotedMsg) {
+    const quoted = await msg.getQuotedMessage().catch(() => null);
+    if (quoted && (quoted.from === 'status@broadcast' || quoted.to === 'status@broadcast' || quoted.hasMedia)) {
+      source = quoted;
+    }
+  }
+
+  if (!source) {
+    const arg = raw.replace(/^(\.savestatus|\.save\s+status)\s*/i, '').trim();
+    const entry = latestStatusEntry(arg || null);
+    source = entry && entry.msg;
+  }
+
+  if (!source || !source.hasMedia) {
+    return msg.reply('No status media found yet. Reply to a status with .savestatus, or wait until the bot sees a media status.');
+  }
+
+  const media = await source.downloadMedia().catch(e => {
+    logLine(`Save status download failed: ${e.message}`);
+    return null;
+  });
+  if (!media) return msg.reply('I could not download that status media. It may have expired or WhatsApp blocked it.');
+
+  const owner = await displayNameFor(client, statusSenderId(source)).catch(() => tag(statusSenderId(source)));
+  media.filename = media.filename || `status-${Date.now()}.${mediaExt(media)}`;
+  return msg.reply(media, undefined, { caption: `Saved status from ${owner}` });
 }
 
 async function displayNameFor(client, id) {
@@ -2457,6 +2610,7 @@ async function smartReply(name, prompt, mood, persona = '') {
 
 async function handleStatusUpdate(client, session, msg, sessionNameValue) {
   if (msg.from !== 'status@broadcast' && msg.to !== 'status@broadcast') return false;
+  rememberStatusMessage(msg);
 
   const actions = [];
 
@@ -2504,6 +2658,9 @@ function settingsText(name, session, g = null) {
     `Smart: ${session.smart ? 'ON' : 'OFF'}`,
     `Typing: ${session.typing ? 'ON' : 'OFF'}`,
     `Online: ${session.online ? 'ON' : 'OFF'}`,
+    `Ghost status: ${session.ghostStatus ? `ON every ${formatDurationShort(session.ghostStatusIntervalMs)}` : 'OFF'}`,
+    `Ghost last seen: ${ghostLastSeenText(session) || 'OFF'}`,
+    `Inbox antidelete: ${session.antideleteInbox ? 'ON' : 'OFF'}`,
     `Mood: ${session.mood}`,
     `Persona: ${session.persona ? 'custom' : 'default'}`,
     `Owner lock: ${ownerlock.enabled ? 'ON' : 'OFF'}`,
@@ -2551,6 +2708,8 @@ function activeCommandsText(name, session, g = null) {
     ['.autoreact', session.autoreact],
     ['.viewstatus', session.statusview],
     ['.likestatus', session.statuslike],
+    ['.ghoststatus', session.ghostStatus],
+    ['.antidelete inbox', session.antideleteInbox],
     ['.autostatus', session.autostatus],
     ['.ownerlock', ownerlock.enabled]
   ].filter(([, enabled]) => Boolean(enabled));
@@ -2814,12 +2973,15 @@ async function start(name) {
     }
     startScheduleLoop(client, name);
     startPlanReminderLoop(client, name);
+    startGhostStatusLoop(client, name);
+    applyGhostLastSeenStatus(client, session, name).catch(e => logLine(`Ghost last-seen startup failed (${name}): ${e.message}`));
     sendDueSchedules(client, name).catch(e => logLine(`Schedule startup check failed (${name}): ${e.message}`));
   });
 
   client.on('disconnected', reason => {
     logLine(`[${name}] DISCONNECTED: ${reason || 'unknown'}`);
     stopScheduleLoop(name);
+    stopGhostStatusLoop(name);
     if (clients[name] === client) delete clients[name];
     client.destroy().catch(e => logLine(`[${name}] disconnected cleanup failed: ${e.message}`));
     if (String(reason || '').toUpperCase() !== 'LOGOUT') {
@@ -3091,6 +3253,7 @@ async function start(name) {
 │ ⚔️ .antispam
 │ ⚔️ .antibadword
 │ ⚔️ .antidelete
+│ ⚔️ .antidelete inbox on/off
 │ ⚔️ .antisale
 │ ⚔️ .antiviewonce
 │ ⚔️ .antiforeign
@@ -3143,6 +3306,10 @@ async function start(name) {
 │ ➤ .viewstatus on/off
 │ ➤ .likestatus on/off
 │ ➤ .reactstatus emoji
+│ ➤ .ghoststatus on/off
+│ ➤ .ghoststatus every 2h
+│ ➤ .ghostlastseen +1d/-1d/now/off
+│ ➤ .savestatus
 │ ➤ .setstatus text
 │ ➤ .autostatus on/off
 ╰───────────────❍
@@ -3715,6 +3882,72 @@ async function start(name) {
         session.statusReact = raw.slice(13).trim() || '💗';
         save(MEMORY_FILE, memory);
         return msg.reply(`Status reaction set to ${session.statusReact}.`);
+      }
+
+      if (text === '.ghoststatus on' || text === '.ghoststatus off') {
+        session.ghostStatus = text.endsWith(' on');
+        if (!session.ghostStatusIntervalMs) session.ghostStatusIntervalMs = DEFAULT_GHOST_STATUS_INTERVAL_MS;
+        save(MEMORY_FILE, memory);
+        if (session.ghostStatus) startGhostStatusLoop(client, name);
+        else stopGhostStatusLoop(name);
+        return msg.reply(
+          `Ghost status ${session.ghostStatus ? 'ON' : 'OFF'}.` +
+          (session.ghostStatus ? ` Viewing cycle: every ${formatDurationShort(session.ghostStatusIntervalMs)}.` : '')
+        );
+      }
+
+      if (text.startsWith('.ghoststatus every ')) {
+        const value = raw.replace(/^\.ghoststatus\s+every\s+/i, '').trim();
+        const duration = parseDuration(value);
+        if (!duration || duration < MIN_GHOST_STATUS_INTERVAL_MS) {
+          return msg.reply('Use: .ghoststatus every 2h\nMinimum interval is 5m.');
+        }
+        session.ghostStatus = true;
+        session.ghostStatusIntervalMs = duration;
+        save(MEMORY_FILE, memory);
+        startGhostStatusLoop(client, name);
+        return msg.reply(`Ghost status ON. Viewing cycle: every ${formatDurationShort(duration)}.`);
+      }
+
+      if (text === '.ghoststatus run') {
+        session.ghostStatus = true;
+        save(MEMORY_FILE, memory);
+        await runGhostStatusView(client, name);
+        startGhostStatusLoop(client, name);
+        return msg.reply('Ghost status view cycle ran now.');
+      }
+
+      if (text.startsWith('.ghostlastseen ')) {
+        const value = raw.replace(/^\.ghostlastseen\s+/i, '').trim().toLowerCase();
+        if (value === 'off') {
+          session.ghostLastSeenMode = 'off';
+          session.ghostLastSeenOffsetMs = 0;
+          session.ghostLastSeenText = null;
+          save(MEMORY_FILE, memory);
+          return msg.reply('Ghost last-seen display OFF.');
+        }
+        if (value === 'now') {
+          session.ghostLastSeenMode = 'now';
+          session.ghostLastSeenOffsetMs = 0;
+        } else {
+          const match = value.match(/^([+-])\s*(\d+\s*[smhd])$/i);
+          const duration = match ? parseDuration(match[2]) : null;
+          if (!duration) return msg.reply('Use: .ghostlastseen +1d, .ghostlastseen -2h, .ghostlastseen now, or .ghostlastseen off');
+          session.ghostLastSeenMode = 'offset';
+          session.ghostLastSeenOffsetMs = match[1] === '-' ? -duration : duration;
+        }
+        const textToApply = ghostLastSeenText(session);
+        session.ghostLastSeenText = textToApply;
+        save(MEMORY_FILE, memory);
+        await applyGhostLastSeenStatus(client, session, name);
+        save(MEMORY_FILE, memory);
+        return msg.reply(`Ghost last-seen display updated:\n${textToApply}`);
+      }
+
+      if (text === '.antidelete inbox on' || text === '.antidelete inbox off' || text === '.inboxantidelete on' || text === '.inboxantidelete off') {
+        session.antideleteInbox = text.endsWith(' on');
+        save(MEMORY_FILE, memory);
+        return msg.reply(`Inbox antidelete ${session.antideleteInbox ? 'ON' : 'OFF'}. Deleted private messages will be reported to this bot inbox.`);
       }
 
       if (text === '.chatbot group on' || text === '.chatbotgroup on') {
@@ -4341,6 +4574,10 @@ async function start(name) {
         return msg.reply(media, undefined, { caption: 'Opened view-once media.' });
       }
 
+      if (text === '.savestatus' || text.startsWith('.savestatus ') || text === '.save status' || text.startsWith('.save status ')) {
+        return saveStatusMediaForCommand(client, msg, raw);
+      }
+
       if (text === '.toimg') {
         const media = await convertMessageMedia(msg, 'png', job => job.outputOptions('-frames:v 1'), 'image/png');
         if (!media) return msg.reply('Reply to a sticker/image/video with .toimg');
@@ -4793,21 +5030,25 @@ async function start(name) {
   client.on('message_revoke_everyone', async (after, before) => {
     try {
       const oldMsg = before || after;
-      if (!oldMsg || !oldMsg.from || !oldMsg.from.includes('@g.us')) return;
+      if (!oldMsg || !oldMsg.from) return;
       const revokedId = oldMsg.id && oldMsg.id._serialized;
       if (revokedId && botDeletedMessageIds.has(revokedId)) {
         botDeletedMessageIds.delete(revokedId);
         return;
       }
 
-      const g = group(oldMsg.from);
-      if (!g.antidelete) return;
+      const isGroupDelete = oldMsg.from.includes('@g.us');
+      const session = sessionSettings(name);
+      const g = isGroupDelete ? group(oldMsg.from) : null;
+      if (isGroupDelete && !g.antidelete) return;
+      if (!isGroupDelete && !session.antideleteInbox) return;
       const chat = await oldMsg.getChat().catch(() => null);
-      if (name !== 'main' && primaryBotIsInChat(chat, client.info && client.info.wid && client.info.wid._serialized)) return;
+      if (isGroupDelete && name !== 'main' && primaryBotIsInChat(chat, client.info && client.info.wid && client.info.wid._serialized)) return;
 
       const cached = oldMsg.id && oldMsg.id._serialized ? messageCache[oldMsg.id._serialized] : null;
       const target = cached ? cached.sender : senderId(oldMsg);
       const botId = client.info && client.info.wid && client.info.wid._serialized;
+      if (!botId) return;
       if (target === botId || oldMsg.fromMe || isKnownBotId(target)) return;
       const body = cached ? cached.body : oldMsg.body;
       const contact = await contactFor(client, target);
@@ -4817,7 +5058,18 @@ async function start(name) {
         ? `*${targetName}* deleted this message:\n${body}`
         : `*${targetName}* deleted a media or empty message.`;
 
-      await client.sendMessage(oldMsg.from, content, { mentions });
+      if (isGroupDelete) {
+        await client.sendMessage(oldMsg.from, content, { mentions });
+      } else {
+        const deletedAt = formatLocalDateTime(Date.now());
+        const inboxReport =
+          '*Inbox deleted message alert*\n\n' +
+          `From: ${targetName} (${tag(target)})\n` +
+          `Deleted at: ${deletedAt}\n` +
+          `Type: ${cached ? cached.type : oldMsg.type || 'message'}\n\n` +
+          (body && body.trim() ? `Message:\n${body}` : 'Message: media or empty message.');
+        await client.sendMessage(botId, inboxReport, { mentions });
+      }
     } catch (e) {
       console.log('ANTIDELETE ERROR:', e.message);
     }
