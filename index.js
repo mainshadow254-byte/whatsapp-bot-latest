@@ -436,7 +436,9 @@ function sleep(ms) {
 }
 
 function senderId(msg) {
-  return msg.author || msg.from;
+  const from = msg.from || '';
+  if (from.includes('@g.us')) return msg.author || from;
+  return msg.fromMe && msg.to ? msg.to : from;
 }
 
 function chatId(msg) {
@@ -1166,10 +1168,38 @@ function formatLocalDateTime(ms) {
 function statusSenderId(msg) {
   return (
     msg.author ||
-    (msg._data && (msg._data.author || msg._data.participant || msg._data.sender)) ||
+    (msg._data && (
+      msg._data.author ||
+      msg._data.participant ||
+      msg._data.sender ||
+      (msg._data.id && (msg._data.id.participant || msg._data.id.remote || msg._data.id.fromMe))
+    )) ||
     activeSenderId(msg) ||
     'status@broadcast'
   );
+}
+
+function phoneLabel(id) {
+  const cleaned = cleanPhoneId(id);
+  const number = cleaned ? cleaned.replace('@c.us', '') : String(id || '').replace(/\D/g, '');
+  return number ? `+${number}` : 'unknown number';
+}
+
+async function identityLabelFor(client, id) {
+  const cleaned = cleanPhoneId(id);
+  const candidates = [...new Set([id, cleaned].filter(Boolean))];
+
+  for (const candidate of candidates) {
+    const contact = await client.getContactById(candidate).catch(() => null);
+    if (!contact) continue;
+    const name = contact.name || contact.pushname || contact.shortName || contact.verifiedName;
+    const number = contact.number || (cleanPhoneId(candidate) || '').replace('@c.us', '');
+    if (name && number) return `${name} (+${number})`;
+    if (name) return name;
+    if (number) return `+${number}`;
+  }
+
+  return phoneLabel(cleaned || id);
 }
 
 function rememberStatusMessage(msg) {
@@ -1269,7 +1299,10 @@ async function saveStatusMediaForCommand(client, msg, raw) {
   });
   if (!media) return msg.reply('I could not download that status media. It may have expired or WhatsApp blocked it.');
 
-  const owner = await displayNameFor(client, statusSenderId(source)).catch(() => tag(statusSenderId(source)));
+  const sourceId = source.id && source.id._serialized;
+  const cachedStatus = sourceId ? statusMessageCache[sourceId] : null;
+  const ownerId = cachedStatus ? cachedStatus.sender : statusSenderId(source);
+  const owner = await identityLabelFor(client, ownerId);
   media.filename = media.filename || `status-${Date.now()}.${mediaExt(media)}`;
   return msg.reply(media, undefined, { caption: `Saved status from ${owner}` });
 }
@@ -5053,6 +5086,7 @@ async function start(name) {
       const body = cached ? cached.body : oldMsg.body;
       const contact = await contactFor(client, target);
       const targetName = await displayNameFor(client, target);
+      const targetLabel = await identityLabelFor(client, target);
       const mentions = contact ? [contact] : [];
       const content = body && body.trim()
         ? `*${targetName}* deleted this message:\n${body}`
@@ -5064,7 +5098,7 @@ async function start(name) {
         const deletedAt = formatLocalDateTime(Date.now());
         const inboxReport =
           '*Inbox deleted message alert*\n\n' +
-          `From: ${targetName} (${tag(target)})\n` +
+          `From: ${targetLabel}\n` +
           `Deleted at: ${deletedAt}\n` +
           `Type: ${cached ? cached.type : oldMsg.type || 'message'}\n\n` +
           (body && body.trim() ? `Message:\n${body}` : 'Message: media or empty message.');
