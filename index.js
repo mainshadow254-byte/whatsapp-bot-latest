@@ -518,6 +518,48 @@ function scheduleSessionRestart(name, reason, delayMs = 15000) {
   }, delayMs);
 }
 
+function sessionAuthDir(name) {
+  return path.join(AUTH_DATA_PATH, `session-${name}`);
+}
+
+function removeStaleBrowserLocks(name) {
+  const dir = sessionAuthDir(name);
+  const lockFile = path.join(dir, 'SingletonLock');
+  const socketFile = path.join(dir, 'SingletonSocket');
+  const cookieFile = path.join(dir, 'SingletonCookie');
+  const devtoolsFile = path.join(dir, 'DevToolsActivePort');
+
+  if (!fs.existsSync(dir)) return;
+
+  let lockTarget = '';
+  try {
+    lockTarget = fs.readlinkSync(lockFile);
+  } catch {}
+
+  const pidMatch = String(lockTarget).match(/-(\d+)$/);
+  const pid = pidMatch ? Number(pidMatch[1]) : null;
+  const stillRunning = pid ? processExists(pid) : false;
+  if (stillRunning) return;
+
+  for (const file of [lockFile, socketFile, cookieFile, devtoolsFile]) {
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {}
+  }
+
+  if (lockTarget) logLine(`[${name}] removed stale browser lock from saved auth session`);
+}
+
+function processExists(pid) {
+  if (!pid || pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function shutdownGracefully(code = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -2982,6 +3024,8 @@ async function start(name) {
   if (clients[name]) return clients[name];
 
   sessionSettings(name);
+  fs.mkdirSync(AUTH_DATA_PATH, { recursive: true });
+  removeStaleBrowserLocks(name);
 
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: name, dataPath: AUTH_DATA_PATH }),
