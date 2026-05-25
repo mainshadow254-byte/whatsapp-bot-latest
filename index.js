@@ -121,6 +121,7 @@ const planReminderIntervals = {};
 const ghostStatusIntervals = {};
 const restartTimers = {};
 const statusMessageCache = {};
+const pairingRequests = {};
 let shuttingDown = false;
 const processedMessages = new Set();
 const botDeletedMessageIds = new Set();
@@ -865,22 +866,75 @@ function sessionName(raw) {
 }
 
 async function requestSessionPairingCode(name, phone) {
-  if (!clients[name]) start(name);
+  if (pairingRequests[name]) {
+    throw new Error(`A pairing request for ${name} is already running. Wait a few seconds and try again.`);
+  }
 
-  let lastError = null;
-  for (let attempt = 0; attempt < 15; attempt++) {
+  pairingRequests[name] = true;
+  try {
+    let lastError = null;
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const targetClient = await waitForPairingClient(name, cycle > 0);
+      if (!targetClient || typeof targetClient.requestPairingCode !== 'function') {
+        lastError = new Error('Pairing is not supported by this WhatsApp Web client.');
+        break;
+      }
+
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          return await targetClient.requestPairingCode(phone);
+        } catch (e) {
+          lastError = e;
+          if (isTargetClosedError(e)) break;
+          await sleep(3000);
+        }
+      }
+
+      if (!isTargetClosedError(lastError)) break;
+      await restartSessionForPairing(name, lastError.message);
+    }
+
+    throw lastError || new Error('Pairing page was not ready.');
+  } finally {
+    delete pairingRequests[name];
+  }
+}
+
+async function waitForPairingClient(name, forceRestart = false) {
+  if (forceRestart || !clients[name]) {
+    if (forceRestart) await restartSessionForPairing(name, 'fresh pairing attempt');
+    else start(name);
+  }
+
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
     const targetClient = clients[name];
     if (targetClient && typeof targetClient.requestPairingCode === 'function') {
-      try {
-        return await targetClient.requestPairingCode(phone);
-      } catch (e) {
-        lastError = e;
-      }
+      const page = targetClient.pupPage;
+      const pageClosed = page && typeof page.isClosed === 'function' && page.isClosed();
+      if (!pageClosed && (lastSessionQr[name] || page)) return targetClient;
     }
     await sleep(2000);
   }
 
-  throw lastError || new Error('Pairing page was not ready.');
+  return clients[name];
+}
+
+async function restartSessionForPairing(name, reason) {
+  clearSessionRestart(name);
+  const current = clients[name];
+  if (current) {
+    await current.destroy().catch(e => logLine(`[${name}] pairing restart cleanup failed: ${e.message}`));
+    delete clients[name];
+  }
+  logLine(`[${name}] restarting session for pairing: ${reason || 'pairing retry'}`);
+  await sleep(2000);
+  return start(name);
+}
+
+function isTargetClosedError(error) {
+  const message = String((error && error.message) || error || '').toLowerCase();
+  return message.includes('target closed') || message.includes('session closed');
 }
 
 function ownerIdFromInput(msg, rawValue) {
