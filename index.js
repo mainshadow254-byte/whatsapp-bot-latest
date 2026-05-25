@@ -1180,9 +1180,29 @@ function statusSenderId(msg) {
 }
 
 function phoneLabel(id) {
-  const cleaned = String(id || '').endsWith('@lid') ? null : cleanPhoneId(id);
-  const number = cleaned ? cleaned.replace('@c.us', '') : String(id || '').replace(/\D/g, '');
-  return number && !String(id || '').endsWith('@lid') ? `+${number}` : 'phone hidden by WhatsApp';
+  const raw = String(id || '');
+  if (raw.endsWith('@lid')) return 'phone hidden by WhatsApp';
+  const cleaned = canCleanAsPhoneId(raw) ? cleanPhoneId(raw) : null;
+  const number = cleaned ? cleaned.replace('@c.us', '') : '';
+  return number ? `+${number}` : safeChatIdLabel(raw);
+}
+
+function canCleanAsPhoneId(value) {
+  const raw = String(value || '').trim();
+  return Boolean(raw && (!raw.includes('@') || raw.endsWith('@c.us') || raw.endsWith('@s.whatsapp.net')));
+}
+
+function safeChatIdLabel(id) {
+  const raw = String(id || '').trim();
+  if (!raw) return 'unknown sender';
+  if (raw === 'status@broadcast') return 'status broadcast';
+  if (raw.endsWith('@newsletter')) {
+    const channelId = raw.replace('@newsletter', '').replace(/\D/g, '');
+    return channelId ? `newsletter channel ${channelId}` : 'newsletter channel';
+  }
+  if (raw.endsWith('@lid')) return 'phone hidden by WhatsApp';
+  if (raw.endsWith('@g.us')) return 'group chat';
+  return 'unknown sender';
 }
 
 async function realPhoneIdFor(client, id) {
@@ -1196,6 +1216,7 @@ async function realPhoneIdFor(client, id) {
   if (lidNumber) return lidNumber;
 
   if (String(id).endsWith('@lid')) return null;
+  if (!canCleanAsPhoneId(id)) return null;
   return cleanPhoneId(id);
 }
 
@@ -1375,14 +1396,14 @@ async function senderLogId(client, msg, fallbackId) {
     ? await msg.getContact().catch(() => null)
     : null;
   const directNumber = contactNumberId(directContact);
-  if (directNumber) return directNumber;
+  if (directNumber) return phoneLabel(directNumber);
 
   const lidNumber = await lidPhoneId(client, fallbackId);
-  if (lidNumber) return lidNumber;
+  if (lidNumber) return phoneLabel(lidNumber);
 
   const lookupContact = await contactFor(client, fallbackId);
   const lookupNumber = contactNumberId(lookupContact);
-  return lookupNumber || fallbackId;
+  return lookupNumber ? phoneLabel(lookupNumber) : safeChatIdLabel(fallbackId);
 }
 
 function isContactId(id) {
@@ -3075,13 +3096,15 @@ async function start(name) {
       const lease = sessionLeaseStats(name);
 
       if (isGroup && isKnownBotId(sender) && sender !== botId) {
-        logLine(`[${name}] ignored group message from another bot session: ${sender}`);
+        const senderLabel = await senderLogId(client, msg, sender);
+        logLine(`[${name}] ignored group message from another bot session: ${senderLabel}`);
         return;
       }
 
       const primaryControlsGroup = isGroup && name !== 'main' && await primaryBotIsInGroup(msg, botId);
       if (primaryControlsGroup && (isCommand || !msg.fromMe)) {
-        logLine(`[${name}] primary bot controls ${from}; ignored ${isCommand ? 'command' : 'group message'} from ${sender}`);
+        const senderLabel = await senderLogId(client, msg, sender);
+        logLine(`[${name}] primary bot controls ${safeChatIdLabel(from)}; ignored ${isCommand ? 'command' : 'group message'} from ${senderLabel}`);
         return;
       }
 
