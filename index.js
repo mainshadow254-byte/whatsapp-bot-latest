@@ -16,12 +16,15 @@ const { promisify } = require('util');
 ffmpeg.setFfmpegPath(ffmpegPath);
 const execFileAsync = promisify(execFile);
 
-const MEMORY_FILE = './memory.json';
-const SESSION_FILE = './sessions.json';
-const OWNERLOCK_FILE = './ownerlock.json';
-const SCHEDULE_FILE = './schedules.json';
-const AUTH_DATA_PATH = path.join(__dirname, '.wwebjs_auth');
-const YOUTUBE_COOKIES_FILE = path.join(__dirname, 'youtube-cookies.txt');
+const DATA_DIR = path.resolve(process.env.DATA_DIR || __dirname);
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const MEMORY_FILE = path.join(DATA_DIR, 'memory.json');
+const SESSION_FILE = path.join(DATA_DIR, 'sessions.json');
+const OWNERLOCK_FILE = path.join(DATA_DIR, 'ownerlock.json');
+const SCHEDULE_FILE = path.join(DATA_DIR, 'schedules.json');
+const AUTH_DATA_PATH = path.resolve(process.env.AUTH_DATA_PATH || path.join(DATA_DIR, '.wwebjs_auth'));
+const YOUTUBE_COOKIES_FILE = path.resolve(process.env.YOUTUBE_COOKIES_FILE || path.join(DATA_DIR, 'youtube-cookies.txt'));
 const SCHEDULE_UTC_OFFSET_HOURS = 3;
 const SCHEDULE_TIMEZONE_LABEL = 'Africa/Nairobi';
 const AUDIO_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
@@ -725,6 +728,278 @@ const GOODBYE_JOKES = [
   "🤣 @username has left the battlefield. Remaining students continue fighting 😭😂"
 ];
 
+const WELCOME_MODE_LABELS = {
+  funny_kenyan: 'Funny Kenyan Street',
+  education: 'Learning / Education',
+  warm: 'Warm Community',
+  soft: 'Soft Polite',
+  savage_light: 'Savage Light',
+  premium: 'Premium / Professional'
+};
+
+const WELCOME_MODE_MENU =
+`Choose welcome mode:
+
+1. Funny Kenyan Street
+2. Learning / Education
+3. Warm Community
+4. Soft Polite
+5. Savage Light
+6. Premium / Professional
+
+Reply with the number or mode name.`;
+
+const WELCOME_MODES = {
+  funny_kenyan: [
+    'Aki @username ameingia {groupName} kama mtu ako na story moto. Karibu bana!',
+    '@username ameland. Sasa group imepata network full bars.',
+    'Karibu @username. Usikae kimya sana, hapa silent readers wako na screenshots.',
+    '@username ndio huyo! Watu waongeze volume, guest amefika.',
+    '@username ameingia kama fare imefika M-Pesa. Mood imechange immediately.',
+    'Karibu @username. Hapa ni vibes, jokes, na small small wisdom.',
+    '@username welcome bana. Ukiona chaos, usishtuke, ni kawaida yetu.',
+    '@username amejoin. Admin sasa anajifanya serious.',
+    'Karibu sana @username. Hii group ni kama matatu, kila mtu ako na opinion.',
+    '@username has entered the chat. Wacha sasa tuanze mambo.',
+    '@username ameingia na pressure ya Monday morning.',
+    'Welcome @username. Hapa ukichelewa kidogo utapata story imefika season 4.',
+    '@username joined quietly, but sisi tumeona. Karibu sana!',
+    '@username karibu {groupName}. Usilete drama mingi, kidogo tu ya entertainment.',
+    '@username amefika. Wale wa screenshots muwe polite leo.',
+    'Karibu @username. Hapa tunacheka kwanza, seriousness baadaye.',
+    '@username ameingia group kama mtu amekuja kuchukua notes za maisha.',
+    '@username karibu. Kama uko na tea, usiifiche.',
+    '@username has joined. Group imepata new character development.',
+    'Karibu @username. Feel at home, but usimalize oxygen ya group.',
+    '@username ndio huyo. Hapa hakuna pressure, ni vibes na confusion kidogo.',
+    '@username ameingia kama notification ya Fuliza.',
+    'Welcome @username. Ukiwa lost, just smile and type haha.',
+    '@username joined {groupName}. Hii entrance iko na confidence.',
+    'Karibu @username. Umeingia group yenye watu wako na maoni kuliko politicians.',
+    '@username amefika. Someone bring chai, hii ni visitor important.',
+    '@username karibu sana. Hapa tunabonga English, Swahili, Sheng, na stress kidogo.',
+    '@username ameingia kama mtu ako na breaking news.',
+    'Welcome @username. Group imekuwa active ghafla kama bundles zimeongezwa.',
+    '@username karibu. Hapa tunajua kucheka even when life inatuchezea.'
+  ],
+  education: [
+    ...WELCOME_JOKES,
+    'Welcome @username. Class has not started, but attendance already looks better.',
+    '@username joined {groupName}. Future graduate detected.',
+    'Karibu @username. Notes, revision, and small panic are served here daily.',
+    '@username joined just in time before the assignment excuse expired.',
+    'Welcome @username. Brain loading, please wait.',
+    '@username has entered the study zone. Distractions are now under review.',
+    'Karibu @username. May your marks rise and your stress reduce.',
+    '@username joined. Someone pass the notes before they ask.',
+    'Welcome @username. Here we revise seriously, after laughing kidogo.',
+    '@username is here. Group average has increased, at least spiritually.',
+    'Karibu @username. This is where confusion comes to be explained.',
+    '@username joined like a scholar with unfinished assignments.',
+    'Welcome @username. If you came for answers, sit near the front.',
+    '@username has joined. Even the syllabus felt pressure.',
+    'Karibu @username. May your memory cooperate during exams.'
+  ],
+  warm: [
+    'Welcome @username. We are happy to have you here.',
+    'Karibu @username. Feel at home in {groupName}.',
+    '@username joined. Let us make them feel welcome.',
+    'Welcome @username. Good people, good energy, good conversations.',
+    'Karibu sana @username. You are among friends here.',
+    '@username has joined {groupName}. The circle just got better.',
+    'Welcome @username. We grow better when we grow together.',
+    '@username is here. New voice, new energy, new connection.',
+    'Karibu @username. May this group be useful and peaceful for you.',
+    'Welcome @username. Join in when you feel ready.'
+  ],
+  soft: [
+    'Welcome @username. We are pleased to have you here.',
+    'Hello @username, welcome to {groupName}.',
+    'Welcome @username. Kindly feel free to participate.',
+    'Good to have you here, @username.',
+    'Welcome @username. We hope this group is helpful to you.',
+    'Hello @username. Please feel comfortable here.',
+    'Welcome to {groupName}, @username.',
+    '@username has joined. Welcome.',
+    'Welcome @username. We appreciate your presence.',
+    'Hello @username. Thank you for joining.'
+  ],
+  savage_light: [
+    '@username joined. Let us see if they bring wisdom or just screenshots.',
+    'Welcome @username. We hope your contribution is stronger than your WiFi.',
+    '@username has entered. Group standards are currently under review.',
+    'Karibu @username. Please do not reduce the average intelligence.',
+    '@username joined with confidence. Evidence is still pending.',
+    'Welcome @username. Behave first, impress us later.',
+    '@username is here. Everybody act like this group is organized.',
+    'Welcome @username. Your probation starts now.',
+    '@username joined. Let us hope they read before asking questions.',
+    'Karibu @username. Do not panic, we also do not know what is happening.'
+  ],
+  premium: [
+    'Welcome @username to {groupName}. We are pleased to have you here.',
+    '@username has joined. Welcome to the community.',
+    'Welcome @username. We look forward to your participation.',
+    'Hello @username. Thank you for joining {groupName}.',
+    'Welcome @username. Please feel free to engage respectfully.',
+    '@username is now part of {groupName}. Welcome aboard.',
+    'Welcome @username. We are glad to have you with us.',
+    'Hello @username. Kindly review the group description when available.',
+    'Welcome @username. We value positive and respectful communication.',
+    '@username joined successfully. Welcome.'
+  ]
+};
+
+const GOODBYE_MODES = {
+  funny_kenyan: [
+    '@username ametoka {groupName} kama mtu ameona contribution message.',
+    '@username amehepa. Hii group pressure ilimshika kidogo.',
+    '@username has left. Safari salama kwa streets za WhatsApp.',
+    '@username ametoka kimya kimya kama mtu wa deni.',
+    '@username ameexit kama bundles zimeisha.',
+    '@username left the group. Hata admin amebaki akijiuliza maswali.',
+    '@username ametoka. Lakini screenshots zake zimebaki kwa history.',
+    '@username ameenda kutafuta peace. Tumpe two minutes arudi.',
+    'Farewell @username. Ukienda group ingine usiseme tulikustress.',
+    '@username left like someone avoiding group work.',
+    '@username ametoroka {groupName}. Mission successful.',
+    '@username has left. Vibes zimepungua by 2%.',
+    '@username ameondoka bila kuaga. Hii tabia tutajadili kesho.',
+    '@username ametoka kama mtu ameona exam timetable.',
+    'Goodbye @username. Ukipata group calm kuliko hii, tutumie location.',
+    '@username has left. Hii ni character development.',
+    '@username amehepa before story ifike climax.',
+    '@username left quietly. Lakini bot iliona kila kitu.',
+    '@username ameenda. Someone check kama ni network ama feelings.',
+    '@username ametoka group kama loan app reminder imeingia.',
+    'Farewell @username. May your next group have less noise and better admins.',
+    '@username left. Sasa nani atakuwa silent reader wetu?',
+    '@username ameexit. Group imebaki na wenyewe.',
+    '@username has left {groupName}. Hii movie itaendelea bila yeye.',
+    '@username ametoka kama mtu amechoka na notifications.',
+    '@username left before admin aanze speech.',
+    'Goodbye @username. Huku nje WhatsApp streets ni cold, vaa jacket.',
+    '@username ameenda kutafuta inner peace. Tunamwish all the best.',
+    '@username left. Labda storage ilikuwa inalia.',
+    '@username has left. Tutaendelea na kikao bila yeye.'
+  ],
+  education: [
+    ...GOODBYE_JOKES,
+    '@username left the study group. The notes remain behind.',
+    '@username has left before revision became serious.',
+    '@username exited {groupName}. May their GPA stay strong.',
+    '@username left like someone avoiding homework.',
+    '@username has gone. Assignment pressure remains undefeated.',
+    '@username left before the CAT timetable dropped.',
+    '@username exited class quietly. Attendance updated.',
+    'Farewell @username. May your exams be merciful.',
+    '@username has left. The syllabus continues without fear.',
+    '@username went offline from learning mode.',
+    '@username escaped before group discussion started.',
+    '@username left, but the notes are still watching.',
+    'Goodbye @username. May success locate you quickly.',
+    '@username left before the teacher entered.',
+    '@username has exited the revision room.'
+  ],
+  warm: [
+    '@username has left. We wish them well.',
+    'Goodbye @username. Thank you for being part of {groupName}.',
+    '@username left the group. May good things follow them.',
+    'Farewell @username. You are always appreciated.',
+    '@username has moved on. Wishing them peace and success.',
+    'Goodbye @username. Your time here mattered.',
+    '@username exited quietly. We send good energy with them.',
+    'Farewell @username. Stay blessed out there.',
+    '@username has left {groupName}. We wish them the best.',
+    'Goodbye @username. May your next step be good.'
+  ],
+  soft: [
+    '@username has left the group.',
+    'Goodbye @username. We wish you well.',
+    '@username has exited {groupName}.',
+    'Farewell @username. Thank you for being here.',
+    '@username has left. Best wishes.',
+    'Goodbye @username. Take care.',
+    '@username is no longer in the group.',
+    'Farewell @username. Wishing you the best.',
+    '@username has exited. Thank you.',
+    'Goodbye @username. Stay well.'
+  ],
+  savage_light: [
+    '@username left. The group survived.',
+    '@username has exited. Peace increased by 1%.',
+    '@username left before we could understand their purpose.',
+    'Goodbye @username. Your silent reading career was appreciated.',
+    '@username escaped. We will pretend we are okay.',
+    '@username has left. The investigation is closed.',
+    '@username left like they finally read the group rules.',
+    'Farewell @username. You tried, maybe.',
+    '@username exited. The group confusion remains.',
+    '@username left before becoming useful. Painful.'
+  ],
+  premium: [
+    '@username has left {groupName}. We wish them the best.',
+    'Thank you @username for being part of the group.',
+    '@username has exited. Best wishes moving forward.',
+    'Farewell @username. We appreciate your time here.',
+    '@username is no longer a member of {groupName}.',
+    'Goodbye @username. Wishing you continued success.',
+    '@username has left. Thank you for your participation.',
+    'Farewell @username. We value the time you spent with us.',
+    '@username exited the group. All the best.',
+    'Goodbye @username. Stay well and keep progressing.'
+  ]
+};
+
+function welcomeModeFromInput(value) {
+  const clean = String(value || '').trim().toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ');
+  const aliases = {
+    '1': 'funny_kenyan',
+    funny: 'funny_kenyan',
+    funny_kenyan: 'funny_kenyan',
+    kenyan: 'funny_kenyan',
+    'funny kenyan': 'funny_kenyan',
+    'funny kenyan street': 'funny_kenyan',
+    'kenyan street': 'funny_kenyan',
+    sheng: 'funny_kenyan',
+    street: 'funny_kenyan',
+    '2': 'education',
+    learning: 'education',
+    education: 'education',
+    'learning education': 'education',
+    school: 'education',
+    study: 'education',
+    '3': 'warm',
+    warm: 'warm',
+    'warm community': 'warm',
+    community: 'warm',
+    '4': 'soft',
+    soft: 'soft',
+    'soft polite': 'soft',
+    polite: 'soft',
+    '5': 'savage_light',
+    savage: 'savage_light',
+    savage_light: 'savage_light',
+    'savage light': 'savage_light',
+    light: 'savage_light',
+    '6': 'premium',
+    premium: 'premium',
+    professional: 'premium',
+    'premium professional': 'premium'
+  };
+  return aliases[clean] || null;
+}
+
+function selectedWelcomeTemplates(settings) {
+  const mode = WELCOME_MODES[settings.welcomeMode] ? settings.welcomeMode : 'funny_kenyan';
+  return WELCOME_MODES[mode] || WELCOME_MODES.funny_kenyan;
+}
+
+function selectedGoodbyeTemplates(settings) {
+  const mode = GOODBYE_MODES[settings.goodbyeMode] ? settings.goodbyeMode : 'funny_kenyan';
+  return GOODBYE_MODES[mode] || GOODBYE_MODES.funny_kenyan;
+}
+
 function hostingPromoText() {
   return `\n\n${HOSTING_PROMO}`;
 }
@@ -763,6 +1038,9 @@ function group(id) {
       antidelete: false,
       welcomeOn: true,
       goodbyeOn: true,
+      welcomeMode: 'funny_kenyan',
+      goodbyeMode: 'funny_kenyan',
+      pendingWelcomeModeSetup: null,
       welcome: null,
       goodbye: null,
       bye: null,
@@ -787,6 +1065,9 @@ function group(id) {
   if (!g.allowedPrefix) g.allowedPrefix = '254';
   if (typeof g.welcomeOn !== 'boolean') g.welcomeOn = true;
   if (typeof g.goodbyeOn !== 'boolean') g.goodbyeOn = true;
+  if (!WELCOME_MODES[g.welcomeMode]) g.welcomeMode = 'funny_kenyan';
+  if (!GOODBYE_MODES[g.goodbyeMode]) g.goodbyeMode = g.welcomeMode || 'funny_kenyan';
+  if (g.pendingWelcomeModeSetup && typeof g.pendingWelcomeModeSetup !== 'object') g.pendingWelcomeModeSetup = null;
   if (!g.goodbye && g.bye) g.goodbye = g.bye;
   if (!g.warnLimit) g.warnLimit = 3;
   if (!g.muted) g.muted = {};
@@ -2070,7 +2351,7 @@ function buildWelcomeMessage(settings, memberId, username, groupName, descriptio
   }
 
   const joke = fillMemberTemplate(
-    rotatingTemplate(settings, WELCOME_JOKES, 'lastWelcomeJoke'),
+    rotatingTemplate(settings, selectedWelcomeTemplates(settings), 'lastWelcomeJoke'),
     memberId,
     username,
     groupName,
@@ -2089,7 +2370,7 @@ function buildGoodbyeMessage(settings, memberId, username, groupName) {
   if (custom) return fillMemberTemplate(custom, memberId, username, groupName, '');
 
   return fillMemberTemplate(
-    rotatingTemplate(settings, GOODBYE_JOKES, 'lastGoodbyeJoke'),
+    rotatingTemplate(settings, selectedGoodbyeTemplates(settings), 'lastGoodbyeJoke'),
     memberId,
     username,
     groupName,
@@ -3218,6 +3499,19 @@ async function start(name) {
 
       const logSender = await senderLogId(client, msg, sender);
       logLine(`[${name}] message from ${logSender}: ${raw.slice(0, 80) || `[${msg.type || 'media'}]`}`);
+
+      if (isGroup && !isCommand && g.pendingWelcomeModeSetup && g.pendingWelcomeModeSetup.by === sender) {
+        const selectedMode = welcomeModeFromInput(raw);
+        if (!selectedMode) return msg.reply(`${WELCOME_MODE_MENU}\n\nPlease reply with a valid number or mode name.`);
+
+        g.welcomeOn = true;
+        g.goodbyeOn = true;
+        g.welcomeMode = selectedMode;
+        g.goodbyeMode = selectedMode;
+        g.pendingWelcomeModeSetup = null;
+        save(MEMORY_FILE, memory);
+        return msg.reply(`Welcome mode set to ${WELCOME_MODE_LABELS[selectedMode]}.\nGoodbye mode has also been set to ${WELCOME_MODE_LABELS[selectedMode]} automatically.`);
+      }
 
       if (text === '.allowinvite') {
         if (isGroup) return msg.reply('Send .allowinvite privately to the bot.');
@@ -4771,11 +5065,18 @@ async function start(name) {
         return msg.reply(media);
       }
 
-      if (text === '.welcome on' || text === '.welcome off') {
+      if (text === '.welcome on') {
         if (!(await requireGroupAdmin(msg))) return;
-        g.welcomeOn = text.endsWith(' on');
+        g.pendingWelcomeModeSetup = { by: sender, at: Date.now() };
         save(MEMORY_FILE, memory);
-        return msg.reply(`Welcome ${g.welcomeOn ? 'ON' : 'OFF'}.`);
+        return msg.reply(WELCOME_MODE_MENU);
+      }
+
+      if (text === '.welcome off') {
+        if (!(await requireGroupAdmin(msg))) return;
+        g.welcomeOn = false;
+        save(MEMORY_FILE, memory);
+        return msg.reply('Welcome OFF.');
       }
 
       if (text === '.goodbye on' || text === '.goodbye off') {

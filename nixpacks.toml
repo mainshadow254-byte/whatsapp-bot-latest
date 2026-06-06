@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["nodejs_22", "chromium", "yt-dlp", "ffmpeg"]
+
+[variables]
+NODE_ENV = "production"
+PUPPETEER_EXECUTABLE_PATH = "/nix/var/nix/profiles/default/bin/chromium"
+DATA_DIR = "/app/data"
+AUTH_DATA_PATH = "/app/data/.wwebjs_auth"

@@ -1,0 +1,10 @@
+node_modules/
+.wwebjs_auth/
+.env
+*.zip
+Update.exe
+memory.json
+sessions.json
+ownerlock.json
+schedules.json
+youtube-cookies.txt
