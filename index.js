@@ -5562,7 +5562,11 @@ async function start(name) {
         return;
       }
 
-      if (msg.fromMe && !String(msg.body || '').trim().startsWith('.')) return;
+      if (msg.fromMe && !String(msg.body || '').trim().startsWith('.')) {
+        const from = chatId(msg);
+        const settings = from && from.includes('@g.us') ? group(from) : null;
+        if (!settings || !settings.pendingWelcomeModeSetup) return;
+      }
       client.emit('message', msg);
     } catch (e) {
       logLine(`message_create bridge failed (${name}): ${e.message}`);
