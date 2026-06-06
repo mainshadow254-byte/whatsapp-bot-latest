@@ -1004,6 +1004,14 @@ function selectedGoodbyeTemplates(settings) {
   return GOODBYE_MODES[mode] || GOODBYE_MODES.funny_kenyan;
 }
 
+function canCompleteWelcomeModeSetup(msg, groupId, settings, sender) {
+  return Boolean(
+    settings &&
+    settings.pendingWelcomeModeSetup &&
+    (settings.pendingWelcomeModeSetup.by === sender || canUseGroupAdminCommands(msg, groupId))
+  );
+}
+
 function hostingPromoText() {
   return `\n\n${HOSTING_PROMO}`;
 }
@@ -2230,6 +2238,17 @@ async function ytDlpDownload(kind, videoUrl, outputPath) {
     '--no-playlist',
     '--no-warnings',
     '--force-overwrites',
+    '--retries',
+    '5',
+    '--fragment-retries',
+    '5',
+    '--socket-timeout',
+    '30',
+    '--force-ipv4',
+    '--geo-bypass',
+    '--no-check-certificates',
+    '--extractor-args',
+    'youtube:player_client=android,web',
     '--user-agent',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36'
   ];
@@ -3512,7 +3531,7 @@ async function start(name) {
       const logSender = await senderLogId(client, msg, sender);
       logLine(`[${name}] message from ${logSender}: ${raw.slice(0, 80) || `[${msg.type || 'media'}]`}`);
 
-      if (isGroup && !isCommand && g.pendingWelcomeModeSetup && g.pendingWelcomeModeSetup.by === sender) {
+      if (isGroup && !isCommand && canCompleteWelcomeModeSetup(msg, from, g, sender)) {
         const selectedMode = welcomeModeFromInput(raw);
         if (!selectedMode) return msg.reply(`${WELCOME_MODE_MENU}\n\nPlease reply with a valid number or mode name.`);
 
@@ -4768,8 +4787,20 @@ async function start(name) {
         if (!target) return msg.reply('Write a phone number after .add');
 
         const chat = await msg.getChat();
-        await chat.addParticipants([target]);
-        return msg.reply('Add request sent.');
+        if (!(await botIsAdmin(client, chat))) {
+          return msg.reply('Make the bot a group admin first so it can add people.');
+        }
+
+        const [outcome] = await tryAddParticipantBatch(chat, [target]);
+        if (outcome && outcome.added) return msg.reply('User added, or WhatsApp accepted the add request.');
+
+        try {
+          const code = await chat.getInviteCode();
+          await client.sendMessage(target, `You are invited to join ${chat.name || 'this group'}:\nhttps://chat.whatsapp.com/${code}`);
+          return msg.reply('Direct add was blocked by WhatsApp, so I sent the user the group invite link privately.');
+        } catch (e) {
+          return msg.reply(`Could not add or invite that number. WhatsApp may block adding privacy-protected numbers, or the number may not be on WhatsApp.\nReason: ${(outcome && outcome.message) || e.message}`);
+        }
       }
 
       if (text.startsWith('.promote')) {
