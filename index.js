@@ -1004,6 +1004,19 @@ function selectedGoodbyeTemplates(settings) {
   return GOODBYE_MODES[mode] || GOODBYE_MODES.funny_kenyan;
 }
 
+function saveWelcomeModeSelection(settings, selectedMode) {
+  settings.welcomeOn = true;
+  settings.goodbyeOn = true;
+  settings.welcomeMode = selectedMode;
+  settings.goodbyeMode = selectedMode;
+  settings.pendingWelcomeModeSetup = null;
+  save(MEMORY_FILE, memory);
+}
+
+function welcomeModeConfirmation(selectedMode) {
+  return `Welcome mode set to ${WELCOME_MODE_LABELS[selectedMode]}.\nGoodbye mode has also been set to ${WELCOME_MODE_LABELS[selectedMode]} automatically.`;
+}
+
 function canCompleteWelcomeModeSetup(msg, groupId, settings, sender) {
   return Boolean(
     settings &&
@@ -3535,13 +3548,8 @@ async function start(name) {
         const selectedMode = welcomeModeFromInput(raw);
         if (!selectedMode) return msg.reply(`${WELCOME_MODE_MENU}\n\nPlease reply with a valid number or mode name.`);
 
-        g.welcomeOn = true;
-        g.goodbyeOn = true;
-        g.welcomeMode = selectedMode;
-        g.goodbyeMode = selectedMode;
-        g.pendingWelcomeModeSetup = null;
-        save(MEMORY_FILE, memory);
-        return msg.reply(`Welcome mode set to ${WELCOME_MODE_LABELS[selectedMode]}.\nGoodbye mode has also been set to ${WELCOME_MODE_LABELS[selectedMode]} automatically.`);
+        saveWelcomeModeSelection(g, selectedMode);
+        return msg.reply(welcomeModeConfirmation(selectedMode));
       }
 
       if (text === '.allowinvite') {
@@ -5108,18 +5116,35 @@ async function start(name) {
         return msg.reply(media);
       }
 
-      if (text === '.welcome on') {
+      if (text.startsWith('.welcome ')) {
         if (!(await requireGroupAdmin(msg))) return;
-        g.pendingWelcomeModeSetup = { by: sender, at: Date.now() };
-        save(MEMORY_FILE, memory);
-        return msg.reply(WELCOME_MODE_MENU);
-      }
 
-      if (text === '.welcome off') {
-        if (!(await requireGroupAdmin(msg))) return;
-        g.welcomeOn = false;
-        save(MEMORY_FILE, memory);
-        return msg.reply('Welcome OFF.');
+        const arg = raw.slice(8).trim();
+        const lowerArg = arg.toLowerCase();
+
+        if (lowerArg === 'on') {
+          g.pendingWelcomeModeSetup = { by: sender, at: Date.now() };
+          save(MEMORY_FILE, memory);
+          return msg.reply(`${WELCOME_MODE_MENU}\n\nTip: If plain number replies do not trigger on your linked device, send .welcome 1 or .welcome funny.`);
+        }
+
+        if (lowerArg === 'off') {
+          g.welcomeOn = false;
+          g.pendingWelcomeModeSetup = null;
+          save(MEMORY_FILE, memory);
+          return msg.reply('Welcome OFF.');
+        }
+
+        const modeInput = lowerArg.startsWith('on ')
+          ? arg.slice(3).trim()
+          : lowerArg.startsWith('mode ')
+            ? arg.slice(5).trim()
+            : arg;
+        const selectedMode = welcomeModeFromInput(modeInput);
+        if (!selectedMode) return msg.reply(WELCOME_MODE_MENU);
+
+        saveWelcomeModeSelection(g, selectedMode);
+        return msg.reply(welcomeModeConfirmation(selectedMode));
       }
 
       if (text === '.goodbye on' || text === '.goodbye off') {
