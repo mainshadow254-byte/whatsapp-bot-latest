@@ -37,6 +37,7 @@ const HOSTING_PROMO = 'For bot hosting call +254 772 418884.';
 const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)
   ? process.env.PUPPETEER_EXECUTABLE_PATH
   : undefined;
+const PAIRING_PHONE_NUMBER = String(process.env.PAIRING_PHONE_NUMBER || '').replace(/\D/g, '');
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
@@ -3367,6 +3368,13 @@ async function start(name) {
 
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: name, dataPath: AUTH_DATA_PATH }),
+    ...(name === 'main' && PAIRING_PHONE_NUMBER ? {
+      pairWithPhoneNumber: {
+        phoneNumber: PAIRING_PHONE_NUMBER,
+        showNotification: true,
+        intervalMs: 180000
+      }
+    } : {}),
     takeoverOnConflict: true,
     takeoverTimeoutMs: 30000,
     puppeteer: {
@@ -3392,7 +3400,8 @@ async function start(name) {
   });
 
   client.on('code', code => {
-    logLine(`[${name}] pairing code: ${code}`);
+    logLine(`[${name}] PAIRING CODE: ${code}`);
+    logLine(`[${name}] Open WhatsApp > Linked devices > Link with phone number, then enter this code.`);
   });
 
   client.on('authenticated', () => {
