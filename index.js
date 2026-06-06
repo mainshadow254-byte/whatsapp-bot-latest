@@ -34,6 +34,9 @@ const MIN_VIDEO_BYTES = 500 * 1024;
 const MAX_VIDEO_BYTES = Number(process.env.MAX_VIDEO_MB || 45) * 1024 * 1024;
 const YT_DLP_VIDEO_HEIGHT = Number(process.env.YT_DLP_VIDEO_HEIGHT || 360);
 const HOSTING_PROMO = 'For bot hosting call +254 772 418884.';
+const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH && fs.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)
+  ? process.env.PUPPETEER_EXECUTABLE_PATH
+  : undefined;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
