@@ -25,6 +25,7 @@ const OWNERLOCK_FILE = path.join(DATA_DIR, 'ownerlock.json');
 const SCHEDULE_FILE = path.join(DATA_DIR, 'schedules.json');
 const AUTH_DATA_PATH = path.resolve(process.env.AUTH_DATA_PATH || path.join(DATA_DIR, '.wwebjs_auth'));
 const YOUTUBE_COOKIES_FILE = path.resolve(process.env.YOUTUBE_COOKIES_FILE || path.join(DATA_DIR, 'youtube-cookies.txt'));
+const YT_DLP_PROXY_DIRECT_FALLBACK = process.env.YT_DLP_PROXY_DIRECT_FALLBACK !== 'false';
 const SCHEDULE_UTC_OFFSET_HOURS = 3;
 const SCHEDULE_TIMEZONE_LABEL = 'Africa/Nairobi';
 const AUDIO_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
@@ -2231,6 +2232,39 @@ async function downloadUrlToFile(url, outputPath) {
   await pipeline(response.body, fs.createWriteStream(outputPath));
 }
 
+function envList(value) {
+  return String(value || '')
+    .split(/[\n,;]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function youtubeProxyCandidates() {
+  const proxies = [
+    ...envList(process.env.YT_DLP_PROXIES),
+    ...envList(process.env.YT_DLP_PROXY)
+  ];
+  const unique = [...new Set(proxies)];
+  if (!unique.length || YT_DLP_PROXY_DIRECT_FALLBACK) unique.push('');
+  return [...new Set(unique)];
+}
+
+function maskProxy(proxy) {
+  if (!proxy) return 'direct';
+  try {
+    const parsed = new URL(proxy);
+    return `${parsed.protocol}//***@${parsed.host}`;
+  } catch {
+    return 'proxy';
+  }
+}
+
+function redactSecrets(text) {
+  return String(text || '')
+    .replace(/(https?:\/\/)[^:\s/@]+:[^@\s/]+@/gi, '$1***:***@')
+    .replace(/(--proxy\s+)[^\s]+/gi, '$1[redacted-proxy]');
+}
+
 async function scraperDownload(kind, videoUrl, outputPath) {
   const result = kind === 'video'
     ? await ytScraper.ytmp4(videoUrl, 360)
@@ -2261,7 +2295,9 @@ async function ytDlpDownload(kind, videoUrl, outputPath) {
     '--geo-bypass',
     '--no-check-certificates',
     '--extractor-args',
-    'youtube:player_client=android,web',
+    'youtube:player_client=android,ios,web,mweb',
+    '--add-header',
+    'accept-language:en-US,en;q=0.9',
     '--user-agent',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36'
   ];
@@ -2270,45 +2306,45 @@ async function ytDlpDownload(kind, videoUrl, outputPath) {
     baseArgs.push('--cookies', YOUTUBE_COOKIES_FILE);
   }
 
-  if (process.env.YT_DLP_PROXY) {
-    baseArgs.push('--proxy', process.env.YT_DLP_PROXY);
-  }
-
   const videoHeight = Number.isInteger(YT_DLP_VIDEO_HEIGHT) && YT_DLP_VIDEO_HEIGHT > 0 ? YT_DLP_VIDEO_HEIGHT : 360;
-  const args = kind === 'video'
+  const mediaArgs = kind === 'video'
     ? [
-        ...baseArgs,
         '-f',
         `bestvideo[ext=mp4][height<=${videoHeight}]+bestaudio[ext=m4a]/best[ext=mp4][height<=${videoHeight}]/best[height<=${videoHeight}]`,
         '--merge-output-format',
-        'mp4',
-        '-o',
-        outputPath,
-        videoUrl
+        'mp4'
       ]
     : [
-        ...baseArgs,
         '-x',
         '--audio-format',
         'mp3',
         '--audio-quality',
-        '128K',
-        '-o',
-        outputPath,
-        videoUrl
+        '128K'
       ];
 
-  try {
-    await execFileAsync(ytDlpPath, args, {
-      timeout: kind === 'video' ? VIDEO_DOWNLOAD_TIMEOUT_MS : AUDIO_DOWNLOAD_TIMEOUT_MS,
-      maxBuffer: 1024 * 1024 * 4
-    });
-  } catch (e) {
-    if (e && e.code === 'ENOENT') {
-      throw new Error(`${ytDlpPath} is not installed or not in PATH`);
+  let lastError;
+  for (const proxy of youtubeProxyCandidates()) {
+    const args = [...baseArgs];
+    if (proxy) args.push('--proxy', proxy);
+    args.push(...mediaArgs, '-o', outputPath, videoUrl);
+
+    try {
+      await execFileAsync(ytDlpPath, args, {
+        timeout: kind === 'video' ? VIDEO_DOWNLOAD_TIMEOUT_MS : AUDIO_DOWNLOAD_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024 * 4
+      });
+      return;
+    } catch (e) {
+      if (e && e.code === 'ENOENT') {
+        throw new Error(`${ytDlpPath} is not installed or not in PATH`);
+      }
+      removeFile(outputPath);
+      lastError = e;
+      logLine(`${kind} yt-dlp attempt failed via ${maskProxy(proxy)}: ${redactSecrets(e.message).split('\n')[0]}`);
     }
-    throw e;
   }
+
+  throw new Error(redactSecrets(lastError && lastError.message ? lastError.message : 'yt-dlp failed'));
 }
 
 function removeFile(file) {
@@ -2604,7 +2640,7 @@ async function sendVideo(msg, query) {
       }));
     }
   } catch (e) {
-    logLine(`Video download failed: ${e && e.stack ? e.stack : e.message}`);
+    logLine(`Video download failed: ${redactSecrets(e.message)}`);
     await msg.react('❌').catch(() => {});
     await msg.reply(fallbackYoutubeReply('video', video, e.message));
   } finally {
