@@ -30,6 +30,7 @@ const SCHEDULE_UTC_OFFSET_HOURS = 3;
 const SCHEDULE_TIMEZONE_LABEL = 'Africa/Nairobi';
 const AUDIO_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const VIDEO_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+const WELCOME_MODE_SETUP_TIMEOUT_MS = 10 * 60 * 1000;
 const MIN_AUDIO_BYTES = 100 * 1024;
 const MIN_VIDEO_BYTES = 500 * 1024;
 const MAX_VIDEO_BYTES = Number(process.env.MAX_VIDEO_MB || 45) * 1024 * 1024;
@@ -1018,7 +1019,22 @@ function welcomeModeConfirmation(selectedMode) {
   return `Welcome mode set to ${WELCOME_MODE_LABELS[selectedMode]}.\nGoodbye mode has also been set to ${WELCOME_MODE_LABELS[selectedMode]} automatically.`;
 }
 
+function isWelcomeModePromptText(value) {
+  const text = String(value || '').toLowerCase();
+  return text.includes('choose welcome mode') || text.includes('please reply with a valid number or mode name');
+}
+
+function clearExpiredWelcomeModeSetup(settings) {
+  const pending = settings && settings.pendingWelcomeModeSetup;
+  if (!pending) return false;
+  if (pending.at && Date.now() - pending.at <= WELCOME_MODE_SETUP_TIMEOUT_MS) return false;
+  settings.pendingWelcomeModeSetup = null;
+  save(MEMORY_FILE, memory);
+  return true;
+}
+
 function canCompleteWelcomeModeSetup(msg, groupId, settings, sender) {
+  if (clearExpiredWelcomeModeSetup(settings)) return false;
   return Boolean(
     settings &&
     settings.pendingWelcomeModeSetup &&
@@ -3582,7 +3598,10 @@ async function start(name) {
 
       if (isGroup && !isCommand && canCompleteWelcomeModeSetup(msg, from, g, sender)) {
         const selectedMode = welcomeModeFromInput(raw);
-        if (!selectedMode) return msg.reply(`${WELCOME_MODE_MENU}\n\nPlease reply with a valid number or mode name.`);
+        if (!selectedMode) {
+          if (msg.fromMe || isWelcomeModePromptText(raw)) return;
+          return msg.reply(`${WELCOME_MODE_MENU}\n\nPlease reply with a valid number or mode name.`);
+        }
 
         saveWelcomeModeSelection(g, selectedMode);
         return msg.reply(welcomeModeConfirmation(selectedMode));
@@ -5599,9 +5618,12 @@ async function start(name) {
       }
 
       if (msg.fromMe && !String(msg.body || '').trim().startsWith('.')) {
+        const body = String(msg.body || '');
         const from = chatId(msg);
         const settings = from && from.includes('@g.us') ? group(from) : null;
         if (!settings || !settings.pendingWelcomeModeSetup) return;
+        if (clearExpiredWelcomeModeSetup(settings)) return;
+        if (isWelcomeModePromptText(body) || !welcomeModeFromInput(body)) return;
       }
       client.emit('message', msg);
     } catch (e) {
