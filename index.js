@@ -26,6 +26,7 @@ const SCHEDULE_FILE = path.join(DATA_DIR, 'schedules.json');
 const AUTH_DATA_PATH = path.resolve(process.env.AUTH_DATA_PATH || path.join(DATA_DIR, '.wwebjs_auth'));
 const YOUTUBE_COOKIES_FILE = path.resolve(process.env.YOUTUBE_COOKIES_FILE || path.join(DATA_DIR, 'youtube-cookies.txt'));
 const YT_DLP_PROXY_DIRECT_FALLBACK = process.env.YT_DLP_PROXY_DIRECT_FALLBACK !== 'false';
+const COBALT_API_URL = String(process.env.COBALT_API_URL || '').trim().replace(/\/+$/, '');
 const SCHEDULE_UTC_OFFSET_HOURS = 3;
 const SCHEDULE_TIMEZONE_LABEL = 'Africa/Nairobi';
 const AUDIO_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
@@ -2295,6 +2296,55 @@ async function scraperDownload(kind, videoUrl, outputPath) {
   return result;
 }
 
+async function cobaltDownload(kind, videoUrl, outputPath) {
+  if (!COBALT_API_URL) throw new Error('Cobalt API is not configured');
+
+  const body = {
+    url: videoUrl,
+    filenameStyle: 'basic',
+    alwaysProxy: true
+  };
+
+  if (kind === 'audio') {
+    body.downloadMode = 'audio';
+    body.audioFormat = 'mp3';
+    body.audioBitrate = '128';
+  } else {
+    body.downloadMode = 'auto';
+    body.videoQuality = String(Number.isInteger(YT_DLP_VIDEO_HEIGHT) && YT_DLP_VIDEO_HEIGHT > 0 ? YT_DLP_VIDEO_HEIGHT : 360);
+    body.youtubeVideoContainer = 'mp4';
+  }
+
+  const response = await fetch(`${COBALT_API_URL}/`, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+
+  let result = null;
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error(`Cobalt returned ${response.status}`);
+  }
+
+  if (!response.ok || !result || result.status === 'error') {
+    const code = result && result.error && result.error.code ? result.error.code : `HTTP ${response.status}`;
+    throw new Error(`Cobalt failed: ${code}`);
+  }
+
+  const directUrl = result.url || result.audio || (Array.isArray(result.tunnel) ? result.tunnel[0] : null);
+  if (!['tunnel', 'redirect'].includes(result.status) || !directUrl) {
+    throw new Error(`Cobalt returned unsupported status: ${result.status}`);
+  }
+
+  await downloadUrlToFile(directUrl, outputPath);
+  return result;
+}
+
 async function ytDlpDownload(kind, videoUrl, outputPath) {
   const ytDlpPath = process.env.YT_DLP_PATH || 'yt-dlp';
   const baseArgs = [
@@ -2557,10 +2607,15 @@ async function sendSong(msg, query) {
     } catch (ytDlpError) {
       logLine(`Song yt-dlp fallback (${ytDlpError.message})`);
       try {
-        await withTimeout(scraperDownload('audio', video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download scraper fallback');
-      } catch (scraperError) {
-        logLine(`Song scraper fallback (${scraperError.message})`);
-        await withTimeout(convertYoutubeToMp3(video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download ytdl fallback');
+        await withTimeout(cobaltDownload('audio', video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download Cobalt fallback');
+      } catch (cobaltError) {
+        logLine(`Song Cobalt fallback (${cobaltError.message})`);
+        try {
+          await withTimeout(scraperDownload('audio', video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download scraper fallback');
+        } catch (scraperError) {
+          logLine(`Song scraper fallback (${scraperError.message})`);
+          await withTimeout(convertYoutubeToMp3(video.url, file), AUDIO_DOWNLOAD_TIMEOUT_MS, 'Song download ytdl fallback');
+        }
       }
     }
     assertUsableFile(file, MIN_AUDIO_BYTES, 'Song download');
@@ -2619,20 +2674,25 @@ async function sendVideo(msg, query) {
     } catch (ytDlpError) {
       logLine(`Video yt-dlp fallback (${ytDlpError.message})`);
       try {
-        await withTimeout(scraperDownload('video', video.url, file), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download scraper fallback');
-      } catch (scraperError) {
-        logLine(`Video scraper fallback (${scraperError.message})`);
-        await withTimeout(new Promise((resolve, reject) => {
-          const stream = ytdl(video.url, {
-            quality: 'lowest',
-            filter: format => format.container === 'mp4' && format.hasAudio && format.hasVideo
-          });
-          stream.on('error', reject);
-          stream
-            .pipe(fs.createWriteStream(file))
-            .on('finish', resolve)
-            .on('error', reject);
-        }), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download ytdl fallback');
+        await withTimeout(cobaltDownload('video', video.url, file), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download Cobalt fallback');
+      } catch (cobaltError) {
+        logLine(`Video Cobalt fallback (${cobaltError.message})`);
+        try {
+          await withTimeout(scraperDownload('video', video.url, file), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download scraper fallback');
+        } catch (scraperError) {
+          logLine(`Video scraper fallback (${scraperError.message})`);
+          await withTimeout(new Promise((resolve, reject) => {
+            const stream = ytdl(video.url, {
+              quality: 'lowest',
+              filter: format => format.container === 'mp4' && format.hasAudio && format.hasVideo
+            });
+            stream.on('error', reject);
+            stream
+              .pipe(fs.createWriteStream(file))
+              .on('finish', resolve)
+              .on('error', reject);
+          }), VIDEO_DOWNLOAD_TIMEOUT_MS, 'Video download ytdl fallback');
+        }
       }
     }
 
