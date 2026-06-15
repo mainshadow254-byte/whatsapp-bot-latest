@@ -1653,13 +1653,13 @@ async function identityLabelFor(client, id, options = {}) {
     const number = (realPhoneId || contactNumberId(contact) || '').replace('@c.us', '');
     if (savedName && options.includePhoneForSaved && number) return `${savedName} (+${number})`;
     if (savedName) return savedName;
-    if (number && profileName) return `Unsaved contact +${number} (${profileName})`;
-    if (number) return `Unsaved contact +${number}`;
-    if (profileName) return `Unsaved contact (${profileName})`;
+    if (number && profileName) return `${profileName} (+${number})`;
+    if (number) return `+${number}`;
+    if (profileName) return profileName;
   }
 
   const phone = phoneLabel(realPhoneId || id);
-  return profileName ? `Unsaved contact ${phone} (${profileName})` : `Unsaved contact ${phone}`;
+  return profileName ? `${profileName} (${phone})` : phone;
 }
 
 function rememberStatusMessage(msg) {
@@ -5701,30 +5701,30 @@ async function start(name) {
         return;
       }
 
-      const isGroupDelete = oldMsg.from.includes('@g.us');
+      const cached = oldMsg.id && oldMsg.id._serialized ? messageCache[oldMsg.id._serialized] : null;
+      const revokeChatId = (cached && cached.from) || chatId(oldMsg) || oldMsg.from;
+      const isGroupDelete = String(revokeChatId || '').includes('@g.us');
       const session = sessionSettings(name);
-      const g = isGroupDelete ? group(oldMsg.from) : null;
+      const g = isGroupDelete ? group(revokeChatId) : null;
       if (isGroupDelete && !g.antidelete) return;
       if (!isGroupDelete && !session.antideleteInbox) return;
       const chat = await oldMsg.getChat().catch(() => null);
       if (isGroupDelete && name !== 'main' && primaryBotIsInChat(chat, client.info && client.info.wid && client.info.wid._serialized)) return;
 
-      const cached = oldMsg.id && oldMsg.id._serialized ? messageCache[oldMsg.id._serialized] : null;
       const target = cached ? cached.sender : senderId(oldMsg);
       const botId = client.info && client.info.wid && client.info.wid._serialized;
       if (!botId) return;
       if (target === botId || oldMsg.fromMe || isKnownBotId(target)) return;
       const body = cached ? cached.body : oldMsg.body;
       const contact = await contactFor(client, target);
-      const targetName = await displayNameFor(client, target);
       const targetLabel = await identityLabelFor(client, target);
       const mentions = contact ? [contact] : [];
       const content = body && body.trim()
-        ? `*${targetName}* deleted this message:\n${body}`
-        : `*${targetName}* deleted a media or empty message.`;
+        ? `*${targetLabel}* deleted this message:\n${body}`
+        : `*${targetLabel}* deleted a media or empty message.`;
 
       if (isGroupDelete) {
-        await client.sendMessage(oldMsg.from, content, { mentions });
+        await client.sendMessage(revokeChatId, content, { mentions });
       } else {
         const deletedAt = formatLocalDateTime(Date.now());
         const inboxReport =
