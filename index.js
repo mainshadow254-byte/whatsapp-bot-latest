@@ -3512,13 +3512,6 @@ async function start(name) {
 
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: name, dataPath: AUTH_DATA_PATH }),
-    ...(name === 'main' && PAIRING_PHONE_NUMBER ? {
-      pairWithPhoneNumber: {
-        phoneNumber: PAIRING_PHONE_NUMBER,
-        showNotification: true,
-        intervalMs: 180000
-      }
-    } : {}),
     takeoverOnConflict: true,
     takeoverTimeoutMs: 30000,
     puppeteer: {
@@ -5790,7 +5783,10 @@ async function start(name) {
     } catch {}
   });
 
-  client.initialize();
+  client.initialize().catch(e => {
+    logLine(`[${name}] initialization failed: ${e.message}`);
+    scheduleSessionRestart(name, e.message || 'initialization failed');
+  });
   return client;
 }
 
