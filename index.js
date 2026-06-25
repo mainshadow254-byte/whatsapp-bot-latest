@@ -1205,13 +1205,13 @@ async function requestSessionPairingCode(name, phone) {
         break;
       }
 
-      for (let attempt = 0; attempt < 5; attempt++) {
+      for (let attempt = 0; attempt < 24; attempt++) {
         try {
-          return await targetClient.requestPairingCode(phone);
+          return await targetClient.requestPairingCode(phone, attempt < 12, 180000);
         } catch (e) {
           lastError = e;
           if (isTargetClosedError(e)) break;
-          await sleep(3000);
+          await sleep(5000);
         }
       }
 
@@ -3543,7 +3543,7 @@ async function start(name) {
         logLine(`[${name}] requesting pairing code for ${PAIRING_PHONE_NUMBER}`);
         requestSessionPairingCode(name, PAIRING_PHONE_NUMBER)
           .catch(e => logLine(`[${name}] automatic pairing code failed: ${e.message}`));
-      }, 1500);
+      }, 8000);
     }
   });
 
