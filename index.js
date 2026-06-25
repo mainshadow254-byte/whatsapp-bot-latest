@@ -132,6 +132,7 @@ const ghostStatusIntervals = {};
 const restartTimers = {};
 const statusMessageCache = {};
 const pairingRequests = {};
+const automaticPairingRequests = {};
 let shuttingDown = false;
 const processedMessages = new Set();
 const botDeletedMessageIds = new Set();
@@ -3534,8 +3535,12 @@ async function start(name) {
     lastSessionQr[name] = qr;
     logLine(`Scan QR (${name})`);
     qrcode.generate(qr, { small: true });
-    if (name === 'main' && PAIRING_PHONE_NUMBER && !pairingRequests[name]) {
+    const lastAutomaticPairing = automaticPairingRequests[name] || 0;
+    const canRequestPairingCode = Date.now() - lastAutomaticPairing > 150000;
+    if (name === 'main' && PAIRING_PHONE_NUMBER && !pairingRequests[name] && canRequestPairingCode) {
+      automaticPairingRequests[name] = Date.now();
       setTimeout(() => {
+        logLine(`[${name}] requesting pairing code for ${PAIRING_PHONE_NUMBER}`);
         requestSessionPairingCode(name, PAIRING_PHONE_NUMBER)
           .catch(e => logLine(`[${name}] automatic pairing code failed: ${e.message}`));
       }, 1500);
