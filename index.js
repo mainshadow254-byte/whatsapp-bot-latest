@@ -41,6 +41,7 @@ const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH && fs.ex
   ? process.env.PUPPETEER_EXECUTABLE_PATH
   : undefined;
 const PAIRING_PHONE_NUMBER = String(process.env.PAIRING_PHONE_NUMBER || '').replace(/\D/g, '');
+const AUTO_MAIN_LOGIN_HELPER = process.env.AUTO_MAIN_LOGIN_HELPER === 'true';
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
@@ -3559,12 +3560,12 @@ async function start(name) {
     lastSessionQr[name] = qr;
     logLine(`Scan QR (${name})`);
     qrcode.generate(qr, { small: true });
-    if (name === 'main') {
+    if (AUTO_MAIN_LOGIN_HELPER && name === 'main') {
       sendMainQrToOwner(qr).catch(e => logLine(`[main] login QR image delivery failed: ${e.message}`));
     }
     const lastAutomaticPairing = automaticPairingRequests[name] || 0;
     const canRequestPairingCode = Date.now() - lastAutomaticPairing > 150000;
-    if (name === 'main' && PAIRING_PHONE_NUMBER && !pairingRequests[name] && canRequestPairingCode) {
+    if (AUTO_MAIN_LOGIN_HELPER && name === 'main' && PAIRING_PHONE_NUMBER && !pairingRequests[name] && canRequestPairingCode) {
       automaticPairingRequests[name] = Date.now();
       setTimeout(() => {
         logLine(`[${name}] requesting pairing code for ${PAIRING_PHONE_NUMBER}`);
