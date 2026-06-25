@@ -133,6 +133,7 @@ const restartTimers = {};
 const statusMessageCache = {};
 const pairingRequests = {};
 const automaticPairingRequests = {};
+const qrDeliveryTimes = {};
 let shuttingDown = false;
 const processedMessages = new Set();
 const botDeletedMessageIds = new Set();
@@ -445,6 +446,29 @@ function rand(arr) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function sendMainQrToOwner(qr) {
+  const target = ownerlock.primaryOwner || (PAIRING_PHONE_NUMBER ? `${PAIRING_PHONE_NUMBER}@c.us` : '');
+  const helper = Object.entries(clients).find(([sessionNameValue, helperClient]) => {
+    return sessionNameValue !== 'main' && helperClient && helperClient.info && helperClient.info.wid;
+  });
+  if (!qr || !target || !helper) return;
+
+  const lastSent = qrDeliveryTimes.main || 0;
+  if (Date.now() - lastSent < 90000) return;
+  qrDeliveryTimes.main = Date.now();
+
+  try {
+    const dataUrl = await qrImage.toDataURL(qr, { margin: 2, width: 420 });
+    const media = new MessageMedia('image/png', dataUrl.split(',')[1], 'main-login-qr.png');
+    await helper[1].sendMessage(target, media, {
+      caption: 'Main session login QR. Open this on your computer, then scan it with WhatsApp > Linked devices.'
+    });
+    logLine(`[main] login QR image sent to ${target} using ${helper[0]}`);
+  } catch (e) {
+    logLine(`[main] login QR image delivery failed: ${e.message}`);
+  }
 }
 
 function senderId(msg) {
@@ -3535,6 +3559,9 @@ async function start(name) {
     lastSessionQr[name] = qr;
     logLine(`Scan QR (${name})`);
     qrcode.generate(qr, { small: true });
+    if (name === 'main') {
+      sendMainQrToOwner(qr).catch(e => logLine(`[main] login QR image delivery failed: ${e.message}`));
+    }
     const lastAutomaticPairing = automaticPairingRequests[name] || 0;
     const canRequestPairingCode = Date.now() - lastAutomaticPairing > 150000;
     if (name === 'main' && PAIRING_PHONE_NUMBER && !pairingRequests[name] && canRequestPairingCode) {
